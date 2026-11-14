@@ -2778,6 +2778,14 @@ void main() {
 	// 10.0 is a magic number, it gives the intended effect in most scenarios.
 	// Low enough for occlusion, high enough for reaction to lights and shadows.
 	specular_occlusion = max(min(reflective_f * specular_occlusion * 10.0, 1.0), specular_occlusion);
+
+	// The estimate above saturates in bright environments, where it would leave reflections
+	// at full strength inside creases that the AO map darkens. Also derive specular occlusion
+	// from the ambient occlusion itself. It is 1.0 when AO is 1.0, so surfaces without AO are unchanged.
+	// Lagarde and de Rousiers, "Moving Frostbite to Physically Based Rendering 3.0",
+	// SIGGRAPH 2014 course notes, section 4.10.2. Its roughness is alpha, Godot's roughness squared.
+	float ao_specular_occlusion = clamp(pow(max(dot(normal, view), 0.0) + ao, exp2(-16.0 * roughness * roughness - 1.0)) - 1.0 + ao, 0.0, 1.0);
+	specular_occlusion = min(specular_occlusion, ao_specular_occlusion);
 	specular_light *= specular_occlusion;
 #endif // BENT_NORMAL_MAP_USED
 #endif // !SPECULAR_OCCLUSION_DISABLED

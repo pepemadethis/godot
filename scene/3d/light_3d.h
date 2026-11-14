@@ -145,6 +145,8 @@ public:
 
 	void set_bake_mode(BakeMode p_mode);
 	BakeMode get_bake_mode() const;
+	// Set by the LightmapGI whose shadowmask holds this light's baked shadow (-1: none).
+	void set_bake_shadowmask_channel(int p_channel);
 
 	void set_projector(const Ref<Texture2D> &p_texture);
 	Ref<Texture2D> get_projector() const;

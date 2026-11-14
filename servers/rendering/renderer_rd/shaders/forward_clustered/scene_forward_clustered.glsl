@@ -2851,6 +2851,13 @@ void fragment_shader(in SceneData scene_data) {
 	}
 
 #ifndef USE_VERTEX_LIGHTING
+#ifdef USE_LIGHTMAP
+	// Baked shadows of omni and spot lights that have no real-time one (LightmapGI.shadowmask_positional):
+	// such a light is scaled by its channel of the lightmap's shadowmask. Read when the first one comes up.
+	vec3 baked_light_shadows = vec3(1.0);
+	bool baked_light_shadows_read = false;
+	bool has_baked_light_shadows = bool(instances.data[instance_index].flags & INSTANCE_FLAGS_USE_LIGHTMAP);
+#endif
 	{ //omni lights
 
 		uint cluster_omni_offset = cluster_offset;
@@ -2888,6 +2895,11 @@ void fragment_shader(in SceneData scene_data) {
 					continue; // Statically baked light and object uses lightmap, skip
 				}
 
+#ifdef USE_LIGHTMAP
+				int baked_shadow_channel = has_baked_light_shadows ? omni_lights.data[light_index].shadowmask_channel : -1;
+				vec3 diffuse_before = diffuse_light;
+				vec3 specular_before = direct_specular_light;
+#endif
 				light_process_omni(light_index, vertex, view, normal, vertex_ddx, vertex_ddy, f0, roughness, metallic, scene_data.taa_frame_count, albedo, alpha, screen_uv, energy_compensation,
 #ifdef LIGHT_BACKLIGHT_USED
 						backlight,
@@ -2908,6 +2920,19 @@ void fragment_shader(in SceneData scene_data) {
 						binormal, tangent, anisotropy,
 #endif
 						diffuse_light, direct_specular_light);
+#ifdef USE_LIGHTMAP
+				if (baked_shadow_channel >= 0) {
+					if (!baked_light_shadows_read) {
+						uint lightmap_ofs = instances.data[instance_index].gi_offset & 0xFFFF;
+						vec3 lightmap_uvw = vec3(uv2 * instances.data[instance_index].lightmap_uv_scale.zw + instances.data[instance_index].lightmap_uv_scale.xy, float(instances.data[instance_index].gi_offset >> 16));
+						baked_light_shadows = textureLod(sampler2DArray(lightmap_textures[MAX_LIGHTMAP_TEXTURES + lightmap_ofs], SAMPLER_LINEAR_CLAMP), lightmap_uvw, 0.0).rgb;
+						baked_light_shadows_read = true;
+					}
+					float lit = baked_light_shadows[baked_shadow_channel];
+					diffuse_light = mix(diffuse_before, diffuse_light, lit);
+					direct_specular_light = mix(specular_before, direct_specular_light, lit);
+				}
+#endif
 			}
 		}
 	}
@@ -2949,6 +2974,11 @@ void fragment_shader(in SceneData scene_data) {
 					continue; // Statically baked light and object uses lightmap, skip
 				}
 
+#ifdef USE_LIGHTMAP
+				int baked_shadow_channel = has_baked_light_shadows ? spot_lights.data[light_index].shadowmask_channel : -1;
+				vec3 diffuse_before = diffuse_light;
+				vec3 specular_before = direct_specular_light;
+#endif
 				light_process_spot(light_index, vertex, view, normal, vertex_ddx, vertex_ddy, f0, roughness, metallic, scene_data.taa_frame_count, albedo, alpha, screen_uv, energy_compensation,
 #ifdef LIGHT_BACKLIGHT_USED
 						backlight,
@@ -2969,6 +2999,19 @@ void fragment_shader(in SceneData scene_data) {
 						binormal, tangent, anisotropy,
 #endif
 						diffuse_light, direct_specular_light);
+#ifdef USE_LIGHTMAP
+				if (baked_shadow_channel >= 0) {
+					if (!baked_light_shadows_read) {
+						uint lightmap_ofs = instances.data[instance_index].gi_offset & 0xFFFF;
+						vec3 lightmap_uvw = vec3(uv2 * instances.data[instance_index].lightmap_uv_scale.zw + instances.data[instance_index].lightmap_uv_scale.xy, float(instances.data[instance_index].gi_offset >> 16));
+						baked_light_shadows = textureLod(sampler2DArray(lightmap_textures[MAX_LIGHTMAP_TEXTURES + lightmap_ofs], SAMPLER_LINEAR_CLAMP), lightmap_uvw, 0.0).rgb;
+						baked_light_shadows_read = true;
+					}
+					float lit = baked_light_shadows[baked_shadow_channel];
+					diffuse_light = mix(diffuse_before, diffuse_light, lit);
+					direct_specular_light = mix(specular_before, direct_specular_light, lit);
+				}
+#endif
 			}
 		}
 	}

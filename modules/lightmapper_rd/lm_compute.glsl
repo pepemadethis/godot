@@ -432,11 +432,20 @@ vec2 get_vogel_disk(float p_i, float p_rotation, float p_sample_count_sqrt) {
 	return vec2(cos(theta), sin(theta)) * r;
 }
 
+#ifdef USE_SHADOWMASK
+// How far the last trace_direct_light() call got: 0, the point is out of the light's range or cone;
+// 1, in reach but facing away (or as good as unlit); 2, lit, and r_shadow says how much arrives.
+uint direct_light_reach = 0;
+#endif
+
 void trace_direct_light(vec3 p_position, vec3 p_normal, uint p_light_index, bool p_soft_shadowing, out vec3 r_light, out vec3 r_light_dir, inout uint r_noise, float p_texel_size, out float r_shadow) {
 	const float EPSILON = 0.00001;
 
 	r_light = vec3(0.0f);
 	r_shadow = 0.0f;
+#ifdef USE_SHADOWMASK
+	direct_light_reach = 0;
+#endif
 
 	vec3 light_pos;
 	float dist;
@@ -519,12 +528,18 @@ void trace_direct_light(vec3 p_position, vec3 p_normal, uint p_light_index, bool
 			float spot_rim = max(0.0001, (1.0 - scos) / (1.0 - cos_spot_angle));
 			attenuation *= 1.0 - pow(spot_rim, light_data.inv_spot_attenuation);
 		}
+#ifdef USE_SHADOWMASK
+		direct_light_reach = 1;
+#endif
 		attenuation *= max(0.0, dot(p_normal, r_light_dir));
 	}
 
 	if (attenuation * light_data.energy <= 0.0001) {
 		return;
 	}
+#ifdef USE_SHADOWMASK
+	direct_light_reach = 2;
+#endif
 
 	float penumbra = 0.0;
 	vec3 penumbra_color = vec3(0.0);
@@ -908,6 +923,8 @@ void main() {
 
 #ifdef USE_SHADOWMASK
 	float shadowmask_value = 0.0f;
+	// Positional lights' shadows by shadowmask channel; lit where no such light reaches.
+	vec3 light_shadows = vec3(1.0);
 #endif
 
 #ifdef USE_SH_LIGHTMAPS
@@ -969,6 +986,9 @@ void main() {
 #ifdef USE_SHADOWMASK
 		if (lights.data[i].type == LIGHT_TYPE_DIRECTIONAL && i == bake_params.shadowmask_light_idx) {
 			shadowmask_value = max(shadowmask_value, shadow);
+		} else if (lights.data[i].shadowmask_channel > 0 && direct_light_reach > 0) {
+			// A surface in reach but facing away is in its own shadow.
+			light_shadows[lights.data[i].shadowmask_channel - 1] = direct_light_reach == 2 ? shadow : 0.0;
 		}
 #endif
 	}
@@ -988,7 +1008,11 @@ void main() {
 #endif
 
 #ifdef USE_SHADOWMASK
-	imageStore(shadowmask, ivec3(atlas_pos, params.atlas_slice), vec4(shadowmask_value, shadowmask_value, shadowmask_value, 1.0));
+	// Red is the directional light's when it bakes one; alpha marks the texel as filled, for the dilation.
+	if (bake_params.shadowmask_light_idx >= 0) {
+		light_shadows.r = shadowmask_value;
+	}
+	imageStore(shadowmask, ivec3(atlas_pos, params.atlas_slice), vec4(light_shadows, 1.0));
 #endif
 
 #endif // MODE_DIRECT_LIGHT

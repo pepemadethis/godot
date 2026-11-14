@@ -218,6 +218,10 @@ Light3D::BakeMode Light3D::get_bake_mode() const {
 	return bake_mode;
 }
 
+void Light3D::set_bake_shadowmask_channel(int p_channel) {
+	RS::get_singleton()->light_set_bake_shadowmask_channel(light, p_channel);
+}
+
 void Light3D::set_projector(const Ref<Texture2D> &p_texture) {
 	projector = p_texture;
 	RID tex_id = projector.is_valid() ? projector->get_rid() : RID();

@@ -75,6 +75,7 @@ private:
 		bool negative = false;
 		bool reverse_cull = false;
 		RSE::LightBakeMode bake_mode = RSE::LIGHT_BAKE_DYNAMIC;
+		int32_t shadowmask_channel = -1; // Its baked shadow's channel in the lightmap's shadowmask, or -1.
 		uint32_t max_sdfgi_cascade = 2;
 		uint32_t cull_mask = 0xFFFFFFFF;
 		uint32_t shadow_caster_mask = 0xFFFFFFFF;
@@ -163,7 +164,8 @@ private:
 		float specular_amount;
 		float shadow_opacity;
 
-		float pad[2];
+		int32_t shadowmask_channel; // Its baked shadow's channel in the shadowmask, or -1.
+		float pad;
 		float atlas_rect[4]; // in omni, used for atlas uv, in spot, used for projector uv
 		float shadow_matrix[16];
 		float shadow_bias;
@@ -551,6 +553,7 @@ public:
 	virtual void light_set_shadow_caster_mask(RID p_light, uint32_t p_caster_mask) override;
 	virtual uint32_t light_get_shadow_caster_mask(RID p_light) const override;
 	virtual void light_set_bake_mode(RID p_light, RSE::LightBakeMode p_bake_mode) override;
+	virtual void light_set_bake_shadowmask_channel(RID p_light, int p_channel) override;
 	virtual void light_set_max_sdfgi_cascade(RID p_light, uint32_t p_cascade) override;
 	virtual void light_set_allow_contact_shadows(RID p_light, bool p_enable) override;
 	virtual bool light_get_allow_contact_shadows(RID p_light) const override;

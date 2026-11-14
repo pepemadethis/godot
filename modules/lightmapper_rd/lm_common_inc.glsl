@@ -87,7 +87,7 @@ struct Light {
 	float indirect_energy;
 	float shadow_blur;
 	bool static_bake;
-	uint pad;
+	uint shadowmask_channel; // 0: none, else 1 + the shadowmask channel holding this light's shadow.
 
 	vec4 area_width;
 	vec4 area_height;

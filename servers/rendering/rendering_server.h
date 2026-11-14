@@ -328,6 +328,9 @@ public:
 	virtual void light_set_allow_contact_shadows(RID p_light, bool p_enable) = 0;
 
 	virtual void light_set_bake_mode(RID p_light, RSE::LightBakeMode p_bake_mode) = 0;
+	// The channel of its lightmap's shadowmask (0 to 2) that holds this omni or spot light's baked shadow, used on
+	// lightmapped surfaces in place of a real-time shadow; -1 for none.
+	virtual void light_set_bake_shadowmask_channel(RID p_light, int p_channel) = 0;
 	virtual void light_set_max_sdfgi_cascade(RID p_light, uint32_t p_cascade) = 0;
 
 	// Omni light

@@ -88,6 +88,17 @@ private:
 
 	Vector<User> users;
 
+	// Omni and spot lights whose shadows are baked into the shadowmask, each with its channel.
+	struct LightShadow {
+		NodePath path;
+		int channel = 0;
+	};
+
+	Vector<LightShadow> light_shadows;
+
+	void _set_light_shadow_data(const Array &p_data);
+	Array _get_light_shadow_data() const;
+
 	void _set_user_data(const Array &p_data);
 	Array _get_user_data() const;
 	void _set_probe_data(const Dictionary &p_data);
@@ -112,6 +123,12 @@ public:
 	Rect2 get_user_lightmap_uv_scale(int p_user) const;
 	int get_user_lightmap_slice_index(int p_user) const;
 	void clear_users();
+
+	void add_light_shadow(const NodePath &p_path, int p_channel);
+	int get_light_shadow_count() const;
+	NodePath get_light_shadow_path(int p_light) const;
+	int get_light_shadow_channel(int p_light) const;
+	void clear_light_shadows();
 
 #ifndef DISABLE_DEPRECATED
 	void set_light_texture(const Ref<TextureLayered> &p_light_texture);
@@ -229,6 +246,7 @@ private:
 	bool directional = false;
 	bool use_texture_for_bounces = true;
 	LightmapGIData::ShadowmaskMode shadowmask_mode = LightmapGIData::SHADOWMASK_MODE_NONE;
+	bool shadowmask_positional = false;
 	GenerateProbes gen_probes = GENERATE_PROBES_SUBDIV_8;
 	float probe_grid_spacing = 0.0; // 0: no regular grid of probes.
 	static constexpr int MAX_PROBE_GRID_POINTS = 262144;
@@ -301,6 +319,7 @@ private:
 
 	void _plot_triangle_into_octree(GenProbesOctree *p_cell, float p_cell_size, const Vector3 *p_triangle);
 	static void _fill_probe_grid(const Vector3i &p_count, PackedColorArray &r_sh);
+	void _assign_light_shadow_channels(const Vector<LightsFound> &p_lights, LocalVector<int> &r_channels) const;
 	static PackedByteArray _probe_grid_visibility(const Vector<Lightmapper::MeshData> &p_meshes, const Vector3 &p_origin, const Vector3 &p_step, const Vector3i &p_count);
 	void _gen_new_positions_from_octree(const GenProbesOctree *p_cell, float p_cell_size, const Vector<Vector3> &probe_positions, LocalVector<Vector3> &new_probe_positions, HashMap<Vector3i, bool> &positions_used, const AABB &p_bounds);
 
@@ -333,6 +352,9 @@ public:
 
 	void set_shadowmask_mode(LightmapGIData::ShadowmaskMode p_mode);
 	LightmapGIData::ShadowmaskMode get_shadowmask_mode() const;
+
+	void set_shadowmask_positional(bool p_enable);
+	bool is_shadowmask_positional() const;
 
 	void set_use_texture_for_bounces(bool p_enable);
 	bool is_using_texture_for_bounces() const;

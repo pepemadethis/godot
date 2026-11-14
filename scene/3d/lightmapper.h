@@ -177,6 +177,11 @@ public:
 	virtual void add_probe(const Vector3 &p_position) = 0;
 	// Probes sampled per pixel need more rays than ones blended per object: bake every probe with at least this many.
 	virtual void set_min_probe_ray_count(int p_rays) {}
+	// Bakes the shadow of the light added last (an omni or spot light) into this channel of the shadowmask
+	// (0 to 2), for renderers to use in place of a real-time shadow. Lights sharing a channel must not overlap.
+	// Channel 0 is the directional light's when a shadowmask is baked for one; giving it to a positional light
+	// leaves the directional light out.
+	virtual void set_light_shadowmask_channel(int p_channel) {}
 	virtual BakeError bake(BakeQuality p_quality, bool p_use_denoiser, float p_denoiser_strength, int p_denoiser_range, int p_bounces, float p_bounce_indirect_energy, float p_bias, int p_max_texture_size, bool p_bake_sh, bool p_bake_shadowmask, bool p_texture_for_bounces, GenerateProbes p_generate_probes, const Ref<Image> &p_environment_panorama, const Basis &p_environment_transform, BakeStepFunc p_step_function = nullptr, void *p_step_userdata = nullptr, float p_exposure_normalization = 1.0, float p_supersampling_factor = 1.0) = 0;
 
 	virtual int get_bake_texture_count() const = 0;

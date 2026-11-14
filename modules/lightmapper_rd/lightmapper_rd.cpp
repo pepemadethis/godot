@@ -196,6 +196,15 @@ void LightmapperRD::add_area_light_atlas(const Vector2i &p_size, int p_mipmap_co
 	area_light_atlas.atlas_data = p_atlas_data;
 }
 
+void LightmapperRD::set_light_shadowmask_channel(int p_channel) {
+	ERR_FAIL_COND(lights.is_empty());
+	ERR_FAIL_INDEX(p_channel, 3);
+	Light &light = lights.write[lights.size() - 1];
+	ERR_FAIL_COND(light.type != LIGHT_TYPE_OMNI && light.type != LIGHT_TYPE_SPOT);
+	light.shadowmask_channel = p_channel + 1;
+	positional_shadowmask = true;
+}
+
 void LightmapperRD::add_probe(const Vector3 &p_position) {
 	Probe probe;
 	probe.position[0] = p_position.x;
@@ -1189,7 +1198,7 @@ LightmapperRD::BakeError LightmapperRD::bake(BakeQuality p_quality, bool p_use_d
 			}
 		}
 
-		if (!found) {
+		if (!found && !positional_shadowmask) {
 			p_bake_shadowmask = false;
 			WARN_PRINT("Shadowmask disabled: no directional light with their bake mode set to dynamic exists.");
 		}
@@ -1378,8 +1387,14 @@ LightmapperRD::BakeError LightmapperRD::bake(BakeQuality p_quality, bool p_use_d
 	// The index of the directional light used for shadowmasking.
 	int shadowmask_light_idx = -1;
 
+	// The first channel is a positional light's when one was given it: no directional light is baked then.
+	bool first_channel_taken = false;
+	for (int i = 0; i < lights.size(); i++) {
+		first_channel_taken = first_channel_taken || lights[i].shadowmask_channel == 1;
+	}
+
 	// Find the directional light index in the sorted lights array.
-	if (p_bake_shadowmask) {
+	if (p_bake_shadowmask && !first_channel_taken) {
 		int shadowmask_lights_count = 0;
 
 		for (int i = 0; i < lights.size(); i++) {
@@ -2418,7 +2433,9 @@ LightmapperRD::BakeError LightmapperRD::bake(BakeQuality p_quality, bool p_use_d
 		for (int i = 0; i < atlas_slices; i++) {
 			Vector<uint8_t> s = rd->texture_get_data(shadowmask_tex, i);
 			Ref<Image> img = Image::create_from_data(atlas_size.width, atlas_size.height, false, Image::FORMAT_RGBA8, s);
-			img->convert(Image::FORMAT_R8);
+			// Red is the directional light's shadow; with positional lights' shadows, green and blue (and red, if no
+			// directional light uses it) are theirs.
+			img->convert(positional_shadowmask ? Image::FORMAT_RGB8 : Image::FORMAT_R8);
 			shadowmask_textures.push_back(img);
 		}
 	}

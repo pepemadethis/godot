@@ -499,6 +499,14 @@ uint32_t LightStorage::light_get_max_sdfgi_cascade(RID p_light) {
 	return light->max_sdfgi_cascade;
 }
 
+void LightStorage::light_set_bake_shadowmask_channel(RID p_light, int p_channel) {
+	Light *light = light_owner.get_or_null(p_light);
+	ERR_FAIL_NULL(light);
+	ERR_FAIL_COND(p_channel < -1 || p_channel > 2);
+
+	light->shadowmask_channel = p_channel;
+}
+
 RSE::LightBakeMode LightStorage::light_get_bake_mode(RID p_light) {
 	const Light *light = light_owner.get_or_null(p_light);
 	ERR_FAIL_NULL_V(light, RSE::LIGHT_BAKE_DISABLED);
@@ -1075,6 +1083,7 @@ void LightStorage::update_light_buffers(RenderDataRD *p_render_data, const Paged
 		light_data.specular_amount = light->param[RSE::LIGHT_PARAM_SPECULAR] * 2.0;
 		light_data.volumetric_fog_energy = light->param[RSE::LIGHT_PARAM_VOLUMETRIC_FOG_ENERGY];
 		light_data.bake_mode = light->bake_mode;
+		light_data.shadowmask_channel = light->shadowmask_channel;
 
 		float radius = MAX(0.001, light->param[RSE::LIGHT_PARAM_RANGE]);
 		light_data.inv_radius = 1.0 / radius;

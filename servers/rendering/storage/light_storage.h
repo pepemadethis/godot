@@ -222,4 +222,9 @@ public:
 	virtual void directional_shadow_atlas_set_size(int p_size, bool p_16_bits = true) = 0;
 	virtual int get_directional_light_shadow_size(RID p_light_instance) = 0;
 	virtual void set_directional_shadow_count(int p_count) = 0;
+
+	// Static cache for directional shadow cascades (renderers that support it; see RendererSceneCull).
+	virtual void directional_shadow_set_static_cache(bool p_enable) {}
+	// Bumped whenever previously cached cascade regions stop being valid.
+	virtual uint64_t directional_shadow_get_static_generation() { return 0; }
 };

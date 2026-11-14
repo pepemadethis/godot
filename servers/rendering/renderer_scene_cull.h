@@ -343,6 +343,21 @@ public:
 		RID self;
 
 		List<Instance *> directional_lights;
+
+		// Where static shadow casters appeared, left, moved or settled, for the directional
+		// shadow static cache: a ring of the last SHADOW_STATIC_CHANGE_RING boxes.
+		static constexpr uint32_t SHADOW_STATIC_CHANGE_RING = 4096;
+		LocalVector<AABB> shadow_static_changes;
+		uint64_t shadow_static_change_count = 0;
+		void push_shadow_static_change(const AABB &p_aabb) {
+			if (shadow_static_changes.size() < SHADOW_STATIC_CHANGE_RING) {
+				shadow_static_changes.push_back(p_aabb);
+			} else {
+				shadow_static_changes[shadow_static_change_count % SHADOW_STATIC_CHANGE_RING] = p_aabb;
+			}
+			shadow_static_change_count++;
+		}
+
 		RID environment;
 		RID fallback_environment;
 		RID camera_attributes;
@@ -628,6 +643,9 @@ public:
 	// a moving ("dynamic") shadow caster, drawn over each light's cached static shadow every time
 	// the light redraws; after resting that long it becomes static and goes into the cache.
 	static constexpr uint64_t SHADOW_STATIC_REST_FRAMES = 30;
+	bool directional_static_cache = false; // rendering/lights_and_shadows/directional_shadow/static_cache
+	real_t directional_static_cache_margin = 0.2;
+	static void _shadow_static_change(Instance *p_instance, const AABB &p_aabb);
 	mutable SelfList<Instance>::List shadow_dynamic_list;
 	uint64_t shadow_dynamic_list_frame = UINT64_MAX;
 	void _instance_mark_shadow_changed(Instance *p_instance) const;
@@ -641,6 +659,7 @@ public:
 		bool material_is_animated;
 		bool shadow_static = false; // Rested long enough to be drawn into the static shadow cache.
 		uint64_t shadow_changed_frame = 0;
+		AABB shadow_static_aabb; // Where it was when it became static (for the directional cache).
 		uint32_t projector_count = 0;
 		uint32_t softshadow_count = 0;
 
@@ -723,6 +742,25 @@ public:
 		RSE::LightBakeMode bake_mode;
 		uint32_t max_sdfgi_cascade = 2;
 		uint32_t cull_mask = 0xFFFFFFFF;
+
+		// Directional shadow static cache. Each cascade keeps a fixed ("sticky") light-space box,
+		// larger than the camera slice by a margin, until the slice leaves it; while it holds,
+		// the static casters' depth is reused from the cache and only moving casters are drawn.
+		struct DirectionalCascadeCache {
+			bool valid = false;
+			real_t x = 0, y = 0, z = 0; // Box centre in light space.
+			real_t half = 0; // Half size of the box.
+			real_t radius = 0; // The camera slice's radius the box was made for.
+			uint64_t version = 1; // Bumped when the cached content becomes stale.
+			uint64_t cached_version = 0; // The version the cache holds.
+			uint64_t generation = 0; // LightStorage::directional_shadow_get_static_generation().
+			uint64_t changes_seen = 0; // Scenario::shadow_static_change_count already checked.
+		} directional_cache[RendererSceneRender::MAX_DIRECTIONAL_LIGHT_CASCADES];
+		Basis directional_cache_basis;
+		int directional_cache_splits = 0;
+		int directional_cache_index = -1;
+		uint64_t directional_cache_frame = UINT64_MAX;
+		uint64_t directional_cache_blocked_until = 0; // Several cameras render this light: no cache.
 
 	private:
 		// Instead of a single dirty flag, we maintain a count
@@ -920,6 +958,8 @@ public:
 
 		struct DirectionalShadow {
 			PagedArray<RenderGeometryInstance *> cascade_geometry_instances[RendererSceneRender::MAX_DIRECTIONAL_LIGHT_CASCADES];
+			// Moving casters of cascades that use the static cache.
+			PagedArray<RenderGeometryInstance *> cascade_dynamic_instances[RendererSceneRender::MAX_DIRECTIONAL_LIGHT_CASCADES];
 		} directional_shadows[RendererSceneRender::MAX_DIRECTIONAL_LIGHTS];
 
 		PagedArray<RenderGeometryInstance *> sdfgi_region_geometry_instances[SDFGI_MAX_CASCADES * SDFGI_MAX_REGIONS_PER_CASCADE];
@@ -938,6 +978,7 @@ public:
 			for (int i = 0; i < RendererSceneRender::MAX_DIRECTIONAL_LIGHTS; i++) {
 				for (int j = 0; j < RendererSceneRender::MAX_DIRECTIONAL_LIGHT_CASCADES; j++) {
 					directional_shadows[i].cascade_geometry_instances[j].clear();
+					directional_shadows[i].cascade_dynamic_instances[j].clear();
 				}
 			}
 
@@ -963,6 +1004,7 @@ public:
 			for (int i = 0; i < RendererSceneRender::MAX_DIRECTIONAL_LIGHTS; i++) {
 				for (int j = 0; j < RendererSceneRender::MAX_DIRECTIONAL_LIGHT_CASCADES; j++) {
 					directional_shadows[i].cascade_geometry_instances[j].reset();
+					directional_shadows[i].cascade_dynamic_instances[j].reset();
 				}
 			}
 
@@ -989,6 +1031,7 @@ public:
 			for (int i = 0; i < RendererSceneRender::MAX_DIRECTIONAL_LIGHTS; i++) {
 				for (int j = 0; j < RendererSceneRender::MAX_DIRECTIONAL_LIGHT_CASCADES; j++) {
 					directional_shadows[i].cascade_geometry_instances[j].merge_unordered(p_cull_result.directional_shadows[i].cascade_geometry_instances[j]);
+					directional_shadows[i].cascade_dynamic_instances[j].merge_unordered(p_cull_result.directional_shadows[i].cascade_dynamic_instances[j]);
 				}
 			}
 
@@ -1014,6 +1057,7 @@ public:
 			for (int i = 0; i < RendererSceneRender::MAX_DIRECTIONAL_LIGHTS; i++) {
 				for (int j = 0; j < RendererSceneRender::MAX_DIRECTIONAL_LIGHT_CASCADES; j++) {
 					directional_shadows[i].cascade_geometry_instances[j].set_page_pool(p_geometry_instance_pool);
+					directional_shadows[i].cascade_dynamic_instances[j].set_page_pool(p_geometry_instance_pool);
 				}
 			}
 
@@ -1137,6 +1181,10 @@ public:
 				real_t bias_scale;
 				real_t range_begin;
 				Vector2 uv_scale;
+
+				// Static cache (see InstanceLightData::DirectionalCascadeCache): when not NONE, casters
+				// are culled against the whole sticky box and split into static and moving lists.
+				RendererSceneRender::ShadowStaticCacheMode static_cache_mode = RendererSceneRender::SHADOW_STATIC_CACHE_NONE;
 
 			} cascades[RendererSceneRender::MAX_DIRECTIONAL_LIGHT_CASCADES]; //max 4 cascades
 			uint32_t cascade_count;

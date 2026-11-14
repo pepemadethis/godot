@@ -987,6 +987,9 @@ void RendererSceneCull::instance_set_layer_mask(RID p_instance, uint32_t p_mask)
 		geom->geometry_instance->set_layer_mask(p_mask);
 
 		if (geom->can_cast_shadows) {
+			if (geom->shadow_static) {
+				_shadow_static_change(instance, instance->transformed_aabb);
+			}
 			for (HashSet<RendererSceneCull::Instance *>::Iterator I = geom->lights.begin(); I != geom->lights.end(); ++I) {
 				InstanceLightData *light = static_cast<InstanceLightData *>((*I)->base_data);
 				light->make_static_shadow_dirty();
@@ -1952,6 +1955,13 @@ void RendererSceneCull::_unpair_instance(Instance *p_instance) {
 		return; //nothing to do
 	}
 
+	if (((1 << p_instance->base_type) & RSE::INSTANCE_GEOMETRY_MASK) && p_instance->base_data) {
+		InstanceGeometryData *geom = static_cast<InstanceGeometryData *>(p_instance->base_data);
+		if (geom->shadow_static && geom->can_cast_shadows) {
+			_shadow_static_change(p_instance, geom->shadow_static_aabb); // Leaves the cached directional shadows.
+		}
+	}
+
 	while (p_instance->pairs.first()) {
 		InstancePair *pair = p_instance->pairs.first()->self();
 		Instance *other_instance = p_instance == pair->a ? pair->b : pair->a;
@@ -2229,6 +2239,28 @@ void RendererSceneCull::_light_instance_setup_directional_shadow(int p_shadow_in
 	cull.shadows[p_shadow_index].light_instance = light->instance;
 	cull.shadows[p_shadow_index].caster_mask = RSG::light_storage->light_get_shadow_caster_mask(p_instance->base);
 
+	// Static cache: usable when exactly one camera renders this light each frame and the light's
+	// direction, split count and atlas slot are the ones the cache was made for.
+	bool use_static_cache = false;
+	if (directional_static_cache && scene_render->shadow_static_cache_is_supported()) {
+		const uint64_t frame = Engine::get_singleton()->get_frames_drawn();
+		if (light->directional_cache_frame == frame) {
+			light->directional_cache_blocked_until = frame + 60;
+		}
+		light->directional_cache_frame = frame;
+		const bool same_setup = light->directional_cache_basis.is_equal_approx(light_transform.basis) && light->directional_cache_splits == splits && light->directional_cache_index == p_shadow_index;
+		use_static_cache = frame >= light->directional_cache_blocked_until && same_setup;
+		if (!use_static_cache) {
+			for (InstanceLightData::DirectionalCascadeCache &cc : light->directional_cache) {
+				cc.valid = false;
+			}
+			light->directional_cache_basis = light_transform.basis;
+			light->directional_cache_splits = splits;
+			light->directional_cache_index = p_shadow_index;
+			// A changed setup is cached from the next frame on.
+		}
+	}
+
 	for (int i = 0; i < splits; i++) {
 		RENDER_TIMESTAMP("Cull DirectionalLight3D, Split " + itos(i));
 
@@ -2356,6 +2388,76 @@ void RendererSceneCull::_light_instance_setup_directional_shadow(int p_shadow_in
 			y_min_cam = Math::snapped(y_vec.dot(center) - radius - soft_shadow_expand, unit);
 		}
 
+		real_t texel_half_size = radius; // Half the size the shadow map's texels are spread over.
+		cull.shadows[p_shadow_index].cascades[i].static_cache_mode = RendererSceneRender::SHADOW_STATIC_CACHE_NONE;
+		if (use_static_cache) {
+			InstanceLightData::DirectionalCascadeCache &cc = light->directional_cache[i];
+			const real_t r = radius + soft_shadow_expand;
+			const real_t cx = x_vec.dot(center);
+			const real_t cy = y_vec.dot(center);
+			const real_t cz = z_vec.dot(center);
+			const bool fits = cc.valid && Math::abs(r - cc.radius) <= r * 0.001 && Math::abs(cx - cc.x) + r <= cc.half && Math::abs(cy - cc.y) + r <= cc.half && Math::abs(cz - cc.z) + r <= cc.half;
+			if (!fits) {
+				// Re-centre on the camera slice, snapped to the box's own texels so shadows stay stable.
+				cc.radius = r;
+				cc.half = r * (1.0 + directional_static_cache_margin);
+				const real_t texel = cc.half * 2.0 / texture_size;
+				cc.x = Math::snapped(cx, texel);
+				cc.y = Math::snapped(cy, texel);
+				cc.z = cz;
+				cc.valid = true;
+				cc.version++;
+			}
+			const uint64_t generation = RSG::light_storage->directional_shadow_get_static_generation();
+			if (cc.generation != generation) {
+				cc.generation = generation;
+				cc.version++;
+			}
+			// Static casters that appeared, left, moved or settled inside the box (from the box's
+			// far side up towards the light) make the cached content stale.
+			Scenario *scenario = p_instance->scenario;
+			if (scenario && cc.changes_seen != scenario->shadow_static_change_count) {
+				if (scenario->shadow_static_change_count - cc.changes_seen > Scenario::SHADOW_STATIC_CHANGE_RING) {
+					cc.version++;
+				} else {
+					for (uint64_t k = cc.changes_seen; k < scenario->shadow_static_change_count; k++) {
+						const AABB &aabb = scenario->shadow_static_changes[k % Scenario::SHADOW_STATIC_CHANGE_RING];
+						real_t bmin[3] = { 1e20, 1e20, 1e20 };
+						real_t bmax[3] = { -1e20, -1e20, -1e20 };
+						for (int e = 0; e < 8; e++) {
+							const Vector3 p = aabb.get_endpoint(e);
+							const real_t d[3] = { x_vec.dot(p), y_vec.dot(p), z_vec.dot(p) };
+							for (int a = 0; a < 3; a++) {
+								bmin[a] = MIN(bmin[a], d[a]);
+								bmax[a] = MAX(bmax[a], d[a]);
+							}
+						}
+						if (bmax[0] >= cc.x - cc.half && bmin[0] <= cc.x + cc.half && bmax[1] >= cc.y - cc.half && bmin[1] <= cc.y + cc.half && bmax[2] >= cc.z - cc.half) {
+							cc.version++;
+							break;
+						}
+					}
+				}
+				cc.changes_seen = scenario->shadow_static_change_count;
+			}
+
+			cull.shadows[p_shadow_index].cascades[i].static_cache_mode = cc.cached_version == cc.version ? RendererSceneRender::SHADOW_STATIC_CACHE_REUSE : RendererSceneRender::SHADOW_STATIC_CACHE_REBUILD;
+			cc.cached_version = cc.version;
+
+			x_min_cam = cc.x - cc.half;
+			x_max_cam = cc.x + cc.half;
+			y_min_cam = cc.y - cc.half;
+			y_max_cam = cc.y + cc.half;
+			z_min_cam = cc.z - cc.half;
+			// Cull casters against the whole box: the cache outlives the current view.
+			x_min = x_min_cam;
+			x_max = x_max_cam;
+			y_min = y_min_cam;
+			y_max = y_max_cam;
+			z_min = z_min_cam;
+			texel_half_size = cc.half;
+		}
+
 		//now that we know all ranges, we can proceed to make the light frustum planes, for culling octree
 
 		Vector<Plane> light_frustum_planes;
@@ -2373,7 +2475,12 @@ void RendererSceneCull::_light_instance_setup_directional_shadow(int p_shadow_in
 
 		// a pre pass will need to be needed to determine the actual z-near to be used
 
-		z_max = z_vec.dot(center) + radius + pancake_size;
+		if (cull.shadows[p_shadow_index].cascades[i].static_cache_mode != RendererSceneRender::SHADOW_STATIC_CACHE_NONE) {
+			const InstanceLightData::DirectionalCascadeCache &cc = light->directional_cache[i];
+			z_max = cc.z + cc.half + pancake_size;
+		} else {
+			z_max = z_vec.dot(center) + radius + pancake_size;
+		}
 
 		{
 			Projection ortho_camera;
@@ -2393,7 +2500,7 @@ void RendererSceneCull::_light_instance_setup_directional_shadow(int p_shadow_in
 			cull.shadows[p_shadow_index].cascades[i].transform = ortho_transform;
 			cull.shadows[p_shadow_index].cascades[i].zfar = z_max - z_min_cam;
 			cull.shadows[p_shadow_index].cascades[i].split = distances[i + 1];
-			cull.shadows[p_shadow_index].cascades[i].shadow_texel_size = radius * 2.0 / texture_size;
+			cull.shadows[p_shadow_index].cascades[i].shadow_texel_size = texel_half_size * 2.0 / texture_size;
 			cull.shadows[p_shadow_index].cascades[i].bias_scale = (z_max - z_min_cam);
 			cull.shadows[p_shadow_index].cascades[i].range_begin = z_max - z_vec.dot(p_cam_transform.origin);
 			cull.shadows[p_shadow_index].cascades[i].uv_scale = uv_scale;
@@ -2410,9 +2517,19 @@ bool RendererSceneCull::_instance_is_shadow_dynamic_by_nature(const Instance *p_
 	return static_cast<const InstanceGeometryData *>(p_instance->base_data)->material_is_animated;
 }
 
+void RendererSceneCull::_shadow_static_change(Instance *p_instance, const AABB &p_aabb) {
+	if (p_instance->scenario) {
+		p_instance->scenario->push_shadow_static_change(p_aabb);
+	}
+}
+
 void RendererSceneCull::_instance_mark_shadow_changed(Instance *p_instance) const {
 	InstanceGeometryData *geom = static_cast<InstanceGeometryData *>(p_instance->base_data);
 	const bool was_static = geom->shadow_static;
+	if (was_static && geom->can_cast_shadows) {
+		// It is in the directional cascades' cached static shadow, at its old place.
+		_shadow_static_change(p_instance, geom->shadow_static_aabb);
+	}
 	geom->shadow_static = false;
 	geom->shadow_changed_frame = Engine::get_singleton()->get_frames_drawn();
 	if (!p_instance->shadow_dynamic_item.in_list()) {
@@ -2452,6 +2569,10 @@ void RendererSceneCull::_update_shadow_static_casters() {
 			InstanceGeometryData *geom = static_cast<InstanceGeometryData *>(instance->base_data);
 			if (frame - geom->shadow_changed_frame >= SHADOW_STATIC_REST_FRAMES) {
 				geom->shadow_static = true;
+				geom->shadow_static_aabb = instance->transformed_aabb;
+				if (geom->can_cast_shadows) {
+					_shadow_static_change(instance, geom->shadow_static_aabb);
+				}
 				shadow_dynamic_list.remove(item);
 				if (geom->can_cast_shadows) {
 					for (const Instance *E : geom->lights) {
@@ -3349,7 +3470,9 @@ void RendererSceneCull::_scene_cull(CullData &cull_data, InstanceCullResult &cul
 
 			for (uint32_t j = 0; j < cull_data.cull->shadow_count; j++) {
 				for (uint32_t k = 0; k < cull_data.cull->shadows[j].cascade_count; k++) {
-					if (!light_culler->cull_directional_light(cull_data.scenario->instance_aabbs[i], j, k)) { // pass the cascade index
+					const RendererSceneRender::ShadowStaticCacheMode cache_mode = cull_data.cull->shadows[j].cascades[k].static_cache_mode;
+					// A cached cascade keeps every caster in its box, not just those near the view.
+					if (cache_mode == RendererSceneRender::SHADOW_STATIC_CACHE_NONE && !light_culler->cull_directional_light(cull_data.scenario->instance_aabbs[i], j, k)) { // pass the cascade index
 						continue;
 					}
 					if (IN_FRUSTUM(cull_data.cull->shadows[j].cascades[k].frustum) && VIS_CHECK) {
@@ -3357,7 +3480,16 @@ void RendererSceneCull::_scene_cull(CullData &cull_data, InstanceCullResult &cul
 
 						const bool is_inactive_particle = (base_type == RSE::INSTANCE_PARTICLES) && RSG::particles_storage->particles_is_inactive(idata.base_rid);
 						if (((1 << base_type) & RSE::INSTANCE_GEOMETRY_MASK) && idata.flags & InstanceData::FLAG_CAST_SHADOWS && (LAYER_CHECK & cull_data.cull->shadows[j].caster_mask) && !is_inactive_particle) {
-							cull_result.directional_shadows[j].cascade_geometry_instances[k].push_back(idata.instance_geometry);
+							if (cache_mode == RendererSceneRender::SHADOW_STATIC_CACHE_NONE) {
+								cull_result.directional_shadows[j].cascade_geometry_instances[k].push_back(idata.instance_geometry);
+							} else {
+								const InstanceGeometryData *geom = static_cast<const InstanceGeometryData *>(idata.instance->base_data);
+								if (!geom->shadow_static || _instance_is_shadow_dynamic_by_nature(idata.instance)) {
+									cull_result.directional_shadows[j].cascade_dynamic_instances[k].push_back(idata.instance_geometry);
+								} else if (cache_mode == RendererSceneRender::SHADOW_STATIC_CACHE_REBUILD) {
+									cull_result.directional_shadows[j].cascade_geometry_instances[k].push_back(idata.instance_geometry);
+								}
+							}
 							mesh_visible = true;
 						}
 					}
@@ -3585,6 +3717,7 @@ void RendererSceneCull::_render_scene(const RendererSceneRender::CameraData *p_c
 	max_shadows_used = 0;
 
 	_update_shadow_static_casters();
+	RSG::light_storage->directional_shadow_set_static_cache(directional_static_cache && scene_render->shadow_static_cache_is_supported());
 
 	if (p_using_shadows) { //setup shadow maps
 
@@ -3601,6 +3734,8 @@ void RendererSceneCull::_render_scene(const RendererSceneRender::CameraData *p_c
 				render_shadow_data[max_shadows_used].light = cull.shadows[i].light_instance;
 				render_shadow_data[max_shadows_used].pass = j;
 				render_shadow_data[max_shadows_used].instances.merge_unordered(scene_cull_result.directional_shadows[i].cascade_geometry_instances[j]);
+				render_shadow_data[max_shadows_used].dynamic_instances.merge_unordered(scene_cull_result.directional_shadows[i].cascade_dynamic_instances[j]);
+				render_shadow_data[max_shadows_used].static_cache_mode = c.static_cache_mode;
 				max_shadows_used++;
 			}
 		}
@@ -4432,6 +4567,9 @@ void RendererSceneCull::_update_dirty_instance(Instance *p_instance) const {
 
 			if (can_cast_shadows != geom->can_cast_shadows) {
 				//ability to cast shadows change, let lights now
+				if (geom->shadow_static) {
+					_shadow_static_change(p_instance, p_instance->transformed_aabb);
+				}
 				for (const Instance *E : geom->lights) {
 					InstanceLightData *light = static_cast<InstanceLightData *>(E->base_data);
 					light->make_static_shadow_dirty();
@@ -4635,6 +4773,8 @@ RendererSceneCull::RendererSceneCull() {
 
 	indexer_update_iterations = GLOBAL_GET("rendering/limits/spatial_indexer/update_iterations_per_frame");
 	thread_cull_threshold = GLOBAL_GET("rendering/limits/spatial_indexer/threaded_cull_minimum_instances");
+	directional_static_cache = GLOBAL_GET("rendering/lights_and_shadows/directional_shadow/static_cache");
+	directional_static_cache_margin = GLOBAL_GET("rendering/lights_and_shadows/directional_shadow/static_cache_margin");
 	thread_cull_threshold = MAX(thread_cull_threshold, (uint32_t)WorkerThreadPool::get_singleton()->get_thread_count()); //make sure there is at least one thread per CPU
 	RendererSceneOcclusionCull::HZBuffer::occlusion_jitter_enabled = GLOBAL_GET("rendering/occlusion_culling/jitter_projection");
 

@@ -2867,7 +2867,45 @@ void LightStorage::update_directional_shadow_atlas() {
 		Vector<RID> fb_tex;
 		fb_tex.push_back(directional_shadow.depth);
 		directional_shadow.fb = RD::get_singleton()->framebuffer_create(fb_tex);
+		directional_shadow.static_generation++;
 	}
+
+	if (directional_shadow.static_cache && directional_shadow.static_depth.is_null() && directional_shadow.size > 0) {
+		RD::TextureFormat tf;
+		tf.format = get_shadow_atlas_depth_format(directional_shadow.use_16_bits);
+		tf.width = directional_shadow.size;
+		tf.height = directional_shadow.size;
+		tf.usage_bits = get_shadow_atlas_depth_usage_bits();
+
+		directional_shadow.static_depth = RD::get_singleton()->texture_create(tf, RD::TextureView());
+		RD::get_singleton()->set_resource_name(directional_shadow.static_depth, "Directional shadow static cache");
+		Vector<RID> fb_tex;
+		fb_tex.push_back(directional_shadow.static_depth);
+		directional_shadow.static_fb = RD::get_singleton()->framebuffer_create(fb_tex);
+		directional_shadow.static_generation++;
+	}
+}
+
+void LightStorage::_directional_shadow_free_static_cache() {
+	if (directional_shadow.static_depth.is_valid()) {
+		RD::get_singleton()->free_rid(directional_shadow.static_depth);
+		directional_shadow.static_depth = RID();
+		directional_shadow.static_fb = RID();
+	}
+	directional_shadow.static_generation++;
+}
+
+void LightStorage::directional_shadow_set_static_cache(bool p_enable) {
+	if (directional_shadow.static_cache == p_enable) {
+		return;
+	}
+	// The texture is made on the next atlas update; turning the cache off frees it.
+	_directional_shadow_free_static_cache();
+	directional_shadow.static_cache = p_enable;
+}
+
+uint64_t LightStorage::directional_shadow_get_static_generation() {
+	return directional_shadow.static_generation;
 }
 void LightStorage::directional_shadow_atlas_set_size(int p_size, bool p_16_bits) {
 	p_size = Math::nearest_power_of_2_templated(p_size);
@@ -2879,6 +2917,7 @@ void LightStorage::directional_shadow_atlas_set_size(int p_size, bool p_16_bits)
 	directional_shadow.size = p_size;
 	directional_shadow.use_16_bits = p_16_bits;
 
+	_directional_shadow_free_static_cache();
 	if (directional_shadow.depth.is_valid()) {
 		RD::get_singleton()->free_rid(directional_shadow.depth);
 		directional_shadow.depth = RID();
@@ -2887,6 +2926,9 @@ void LightStorage::directional_shadow_atlas_set_size(int p_size, bool p_16_bits)
 }
 
 void LightStorage::set_directional_shadow_count(int p_count) {
+	if (directional_shadow.light_count != p_count) {
+		directional_shadow.static_generation++; // Each light's region moves.
+	}
 	directional_shadow.light_count = p_count;
 	directional_shadow.current_light = 0;
 }

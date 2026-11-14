@@ -458,6 +458,13 @@ private:
 		int size = 0;
 		bool use_16_bits = true;
 		int current_light = 0;
+
+		// Static cache: the static casters' depth per cascade, same layout as `depth`.
+		bool static_cache = false;
+		RID static_depth;
+		RID static_fb;
+		// Changes whenever cached regions become invalid (atlas recreated, regions moved).
+		uint64_t static_generation = 1;
 	} directional_shadow;
 
 	/* SHADOW CUBEMAPS */
@@ -1219,6 +1226,19 @@ public:
 	_FORCE_INLINE_ void directional_shadow_increase_current_light() {
 		directional_shadow.current_light++;
 	}
+
+	void _directional_shadow_free_static_cache();
+
+	_FORCE_INLINE_ RID directional_shadow_get_static_texture() {
+		return directional_shadow.static_depth;
+	}
+
+	_FORCE_INLINE_ RID directional_shadow_get_static_fb() {
+		return directional_shadow.static_fb;
+	}
+
+	virtual void directional_shadow_set_static_cache(bool p_enable) override;
+	virtual uint64_t directional_shadow_get_static_generation() override;
 
 	/* SHADOW CUBEMAPS */
 

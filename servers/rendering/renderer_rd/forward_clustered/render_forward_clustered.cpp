@@ -1714,7 +1714,21 @@ void RenderForwardClustered::_pre_opaque_render(RenderDataRD *p_render_data, boo
 
 		//render directional shadows
 		for (uint32_t i = 0; i < p_render_data->directional_shadows.size(); i++) {
-			_render_shadow_pass(p_render_data->render_shadows[p_render_data->directional_shadows[i]].light, p_render_data->shadow_atlas, p_render_data->render_shadows[p_render_data->directional_shadows[i]].pass, p_render_data->render_shadows[p_render_data->directional_shadows[i]].instances, lod_distance_multiplier, p_render_data->scene_data->screen_mesh_lod_threshold, false, i == p_render_data->directional_shadows.size() - 1, false, p_render_data->render_info, viewport_size, p_render_data->scene_data->cam_transform);
+			const RenderShadowData &shadow = p_render_data->render_shadows[p_render_data->directional_shadows[i]];
+			const bool last = i == p_render_data->directional_shadows.size() - 1;
+			switch (shadow.static_cache_mode) {
+				case SHADOW_STATIC_CACHE_NONE: {
+					_render_shadow_pass(shadow.light, p_render_data->shadow_atlas, shadow.pass, shadow.instances, lod_distance_multiplier, p_render_data->scene_data->screen_mesh_lod_threshold, false, last, false, p_render_data->render_info, viewport_size, p_render_data->scene_data->cam_transform);
+				} break;
+				case SHADOW_STATIC_CACHE_REBUILD: {
+					// The cascade's static casters into the cache, then the cache into the atlas with the moving casters over it.
+					_render_shadow_pass(shadow.light, p_render_data->shadow_atlas, shadow.pass, shadow.instances, lod_distance_multiplier, p_render_data->scene_data->screen_mesh_lod_threshold, false, false, true, p_render_data->render_info, viewport_size, p_render_data->scene_data->cam_transform, SHADOW_DESTINATION_STATIC_CACHE);
+					_render_shadow_pass(shadow.light, p_render_data->shadow_atlas, shadow.pass, shadow.dynamic_instances, lod_distance_multiplier, p_render_data->scene_data->screen_mesh_lod_threshold, false, last, false, p_render_data->render_info, viewport_size, p_render_data->scene_data->cam_transform, SHADOW_DESTINATION_ATLAS_OVER_CACHE);
+				} break;
+				case SHADOW_STATIC_CACHE_REUSE: {
+					_render_shadow_pass(shadow.light, p_render_data->shadow_atlas, shadow.pass, shadow.dynamic_instances, lod_distance_multiplier, p_render_data->scene_data->screen_mesh_lod_threshold, false, last, false, p_render_data->render_info, viewport_size, p_render_data->scene_data->cam_transform, SHADOW_DESTINATION_ATLAS_OVER_CACHE);
+				} break;
+			}
 		}
 		//render positional shadows
 		for (uint32_t i = 0; i < p_render_data->shadows.size(); i++) {
@@ -2786,6 +2800,7 @@ void RenderForwardClustered::_render_shadow_pass(RID p_light, RID p_shadow_atlas
 
 	Projection light_projection;
 	Transform3D light_transform;
+	RID static_texture; // The static cache that SHADOW_DESTINATION_ATLAS_OVER_CACHE restores from.
 
 	if (light_storage->light_get_type(base) == RSE::LIGHT_DIRECTIONAL) {
 		//set pssm stuff
@@ -2830,7 +2845,10 @@ void RenderForwardClustered::_render_shadow_pass(RID p_light, RID p_shadow_atlas
 
 		zfar = RSG::light_storage->light_get_param(base, RSE::LIGHT_PARAM_RANGE);
 
-		render_fb = light_storage->direction_shadow_get_fb();
+		// The static cache mirrors the directional atlas's layout, so each cascade's region is the same in both.
+		render_fb = p_destination == SHADOW_DESTINATION_STATIC_CACHE ? light_storage->directional_shadow_get_static_fb() : light_storage->direction_shadow_get_fb();
+		ERR_FAIL_COND(render_fb.is_null());
+		static_texture = light_storage->directional_shadow_get_static_texture();
 		render_texture = RID();
 		flip_y = true;
 
@@ -2845,6 +2863,7 @@ void RenderForwardClustered::_render_shadow_pass(RID p_light, RID p_shadow_atlas
 		// The static cache mirrors the atlas's layout, so the light's region is the same in both.
 		RID positional_fb = p_destination == SHADOW_DESTINATION_STATIC_CACHE ? light_storage->shadow_atlas_get_static_fb(p_shadow_atlas) : light_storage->shadow_atlas_get_fb(p_shadow_atlas);
 		ERR_FAIL_COND(positional_fb.is_null());
+		static_texture = light_storage->shadow_atlas_get_static_texture(p_shadow_atlas);
 
 		uint32_t key = light_storage->shadow_atlas_get_light_instance_key(p_shadow_atlas, p_light);
 
@@ -2985,7 +3004,7 @@ void RenderForwardClustered::_render_shadow_pass(RID p_light, RID p_shadow_atlas
 			restore.clear_depth = false;
 			restore.flip_cull = false;
 			restore.uniform_buffer_index = 0;
-			restore.restore_source = light_storage->shadow_atlas_get_static_texture(p_shadow_atlas);
+			restore.restore_source = static_texture;
 			scene_state.shadow_passes.push_back(restore);
 			if (p_instances.size() == 0) {
 				return; // Nothing moving to draw over it.

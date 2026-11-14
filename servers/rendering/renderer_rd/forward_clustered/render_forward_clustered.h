@@ -452,6 +452,9 @@ private:
 			bool flip_cull;
 
 			uint32_t uniform_buffer_index;
+
+			// If valid, this pass draws nothing: it copies `rect` of this static cache texture into `framebuffer`.
+			RID restore_source;
 		};
 
 		LocalVector<ShadowPass> shadow_passes;
@@ -785,7 +788,16 @@ private:
 
 	/* Render shadows */
 
-	void _render_shadow_pass(RID p_light, RID p_shadow_atlas, int p_pass, const PagedArray<RenderGeometryInstance *> &p_instances, float p_lod_distance_multiplier = 0, float p_screen_mesh_lod_threshold = 0.0, bool p_open_pass = true, bool p_close_pass = true, bool p_clear_region = true, RenderingServerTypes::RenderInfo *p_render_info = nullptr, const Size2i &p_viewport_size = Size2i(1, 1), const Transform3D &p_main_cam_transform = Transform3D());
+	// Where a positional light's shadow pass draws, for the shadow atlas's static cache.
+	enum ShadowDestination {
+		SHADOW_DESTINATION_ATLAS, // Into the shadow atlas, clearing the light's region first.
+		SHADOW_DESTINATION_STATIC_CACHE, // Into the static cache, clearing the light's region first.
+		SHADOW_DESTINATION_ATLAS_OVER_CACHE, // Restore the light's region from the static cache, then draw over it.
+	};
+
+	void _render_shadow_pass(RID p_light, RID p_shadow_atlas, int p_pass, const PagedArray<RenderGeometryInstance *> &p_instances, float p_lod_distance_multiplier = 0, float p_screen_mesh_lod_threshold = 0.0, bool p_open_pass = true, bool p_close_pass = true, bool p_clear_region = true, RenderingServerTypes::RenderInfo *p_render_info = nullptr, const Size2i &p_viewport_size = Size2i(1, 1), const Transform3D &p_main_cam_transform = Transform3D(), ShadowDestination p_destination = SHADOW_DESTINATION_ATLAS);
+	void _get_omni_shadow_atlas_slots(RID p_light, RID p_shadow_atlas, Rect2i r_slots[2]);
+	void _render_positional_shadow(const RenderShadowData &p_shadow, RID p_shadow_atlas, float p_lod_distance_multiplier, float p_screen_mesh_lod_threshold, bool p_open_pass, bool p_close_pass, RenderingServerTypes::RenderInfo *p_render_info, const Size2i &p_viewport_size, const Transform3D &p_main_cam_transform);
 	void _render_shadow_begin();
 	void _render_shadow_append(RID p_framebuffer, const PagedArray<RenderGeometryInstance *> &p_instances, const Projection &p_projection, const Transform3D &p_transform, float p_zfar, float p_bias, float p_normal_bias, bool p_reverse_cull_face, bool p_use_dp, bool p_use_dp_flip, bool p_use_pancake, float p_lod_distance_multiplier = 0.0, float p_screen_mesh_lod_threshold = 0.0, const Rect2i &p_rect = Rect2i(), bool p_flip_y = false, bool p_clear_region = true, bool p_begin = true, bool p_end = true, RenderingServerTypes::RenderInfo *p_render_info = nullptr, const Size2i &p_viewport_size = Size2i(1, 1), const Transform3D &p_main_cam_transform = Transform3D());
 	void _render_shadow_process();
@@ -864,6 +876,8 @@ public:
 
 	virtual void enable_features(BitField<FeatureBits> p_feature_bits) override;
 	virtual String get_name() const override;
+
+	virtual bool shadow_static_cache_is_supported() const override { return true; }
 
 	virtual bool free(RID p_rid) override;
 

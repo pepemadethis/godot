@@ -473,6 +473,7 @@ public:
 		bool update_dependencies;
 
 		SelfList<Instance> update_item;
+		SelfList<Instance> shadow_dynamic_item; // In shadow_dynamic_list while the geometry counts as a moving shadow caster.
 
 		AABB *custom_aabb = nullptr; // <Zylann> would using aabb directly with a bool be better?
 		float extra_margin;
@@ -568,7 +569,8 @@ public:
 
 		Instance() :
 				scenario_item(this),
-				update_item(this) {
+				update_item(this),
+				shadow_dynamic_item(this) {
 			base_type = RSE::INSTANCE_NONE;
 			cast_shadows = RSE::SHADOW_CASTING_SETTING_ON;
 			receive_shadows = true;
@@ -622,11 +624,23 @@ public:
 	mutable SelfList<Instance>::List _instance_update_list;
 	void _instance_queue_update(Instance *p_instance, bool p_update_aabb, bool p_update_dependencies = false) const;
 
+	// Static shadow cache. Geometry that changed in the last SHADOW_STATIC_REST_FRAMES frames is
+	// a moving ("dynamic") shadow caster, drawn over each light's cached static shadow every time
+	// the light redraws; after resting that long it becomes static and goes into the cache.
+	static constexpr uint64_t SHADOW_STATIC_REST_FRAMES = 30;
+	mutable SelfList<Instance>::List shadow_dynamic_list;
+	uint64_t shadow_dynamic_list_frame = UINT64_MAX;
+	void _instance_mark_shadow_changed(Instance *p_instance) const;
+	void _update_shadow_static_casters();
+	static bool _instance_is_shadow_dynamic_by_nature(const Instance *p_instance);
+
 	struct InstanceGeometryData : public InstanceBaseData {
 		RenderGeometryInstance *geometry_instance = nullptr;
 		HashSet<Instance *> lights;
 		bool can_cast_shadows;
 		bool material_is_animated;
+		bool shadow_static = false; // Rested long enough to be drawn into the static shadow cache.
+		uint64_t shadow_changed_frame = 0;
 		uint32_t projector_count = 0;
 		uint32_t softshadow_count = 0;
 
@@ -695,6 +709,8 @@ public:
 	struct InstanceLightData : public InstanceBaseData {
 		RID instance;
 		uint64_t last_version;
+		// Changes whenever what the static casters draw into this light's shadow changes.
+		uint64_t static_version = 1;
 		List<Instance *>::Element *D; // directional light in scenario
 
 		bool uses_projector = false;
@@ -721,6 +737,11 @@ public:
 	public:
 		bool is_shadow_dirty() const { return shadow_dirty_count != 0; }
 		void make_shadow_dirty() { shadow_dirty_count = light_intersects_multiple_cameras ? 1 : 2; }
+		// The static casters' part of the shadow changed too, so a cached copy of it is stale.
+		void make_static_shadow_dirty() {
+			static_version++;
+			make_shadow_dirty();
+		}
 		void detect_light_intersects_multiple_cameras(uint32_t p_frame_id) {
 			// We need to detect the case where shadow updates are occurring
 			// more than once per frame. In this case, we need to turn off
@@ -1080,6 +1101,18 @@ public:
 	_FORCE_INLINE_ void _update_instance_aabb(Instance *p_instance) const;
 	_FORCE_INLINE_ void _update_dirty_instance(Instance *p_instance) const;
 	_FORCE_INLINE_ void _update_instance_lightmap_captures(Instance *p_instance) const;
+
+	// Adds a shadow caster to the list its static cache mode puts it in (see ShadowStaticCacheMode).
+	_FORCE_INLINE_ void _push_shadow_caster(RendererSceneRender::RenderShadowData &r_shadow_data, Instance *p_instance, RendererSceneRender::ShadowStaticCacheMode p_mode) const {
+		InstanceGeometryData *geom = static_cast<InstanceGeometryData *>(p_instance->base_data);
+		if (p_mode == RendererSceneRender::SHADOW_STATIC_CACHE_NONE) {
+			r_shadow_data.instances.push_back(geom->geometry_instance);
+		} else if (!geom->shadow_static || _instance_is_shadow_dynamic_by_nature(p_instance)) {
+			r_shadow_data.dynamic_instances.push_back(geom->geometry_instance);
+		} else if (p_mode == RendererSceneRender::SHADOW_STATIC_CACHE_REBUILD) {
+			r_shadow_data.instances.push_back(geom->geometry_instance);
+		}
+	}
 	void _unpair_instance(Instance *p_instance);
 
 	void _light_instance_setup_directional_shadow(int p_shadow_index, Instance *p_instance, const Transform3D p_cam_transform, const Projection &p_cam_projection, bool p_cam_orthogonal, bool p_cam_vaspect);

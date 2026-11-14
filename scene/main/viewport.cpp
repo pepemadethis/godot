@@ -1462,6 +1462,21 @@ bool Viewport::get_positional_shadow_atlas_16_bits() const {
 	ERR_READ_THREAD_GUARD_V(false);
 	return positional_shadow_atlas_16_bits;
 }
+
+void Viewport::set_positional_shadow_atlas_static_cache(bool p_enable) {
+	ERR_MAIN_THREAD_GUARD;
+	if (positional_shadow_atlas_static_cache == p_enable) {
+		return;
+	}
+
+	positional_shadow_atlas_static_cache = p_enable;
+	RS::get_singleton()->viewport_set_positional_shadow_atlas_static_cache(viewport, positional_shadow_atlas_static_cache);
+}
+
+bool Viewport::get_positional_shadow_atlas_static_cache() const {
+	ERR_READ_THREAD_GUARD_V(false);
+	return positional_shadow_atlas_static_cache;
+}
 void Viewport::set_positional_shadow_atlas_quadrant_subdiv(int p_quadrant, PositionalShadowAtlasQuadrantSubdiv p_subdiv) {
 	ERR_MAIN_THREAD_GUARD;
 	ERR_FAIL_INDEX(p_quadrant, 4);
@@ -5291,6 +5306,8 @@ void Viewport::_bind_methods() {
 
 	ClassDB::bind_method(D_METHOD("set_positional_shadow_atlas_16_bits", "enable"), &Viewport::set_positional_shadow_atlas_16_bits);
 	ClassDB::bind_method(D_METHOD("get_positional_shadow_atlas_16_bits"), &Viewport::get_positional_shadow_atlas_16_bits);
+	ClassDB::bind_method(D_METHOD("set_positional_shadow_atlas_static_cache", "enable"), &Viewport::set_positional_shadow_atlas_static_cache);
+	ClassDB::bind_method(D_METHOD("get_positional_shadow_atlas_static_cache"), &Viewport::get_positional_shadow_atlas_static_cache);
 
 	ClassDB::bind_method(D_METHOD("set_snap_controls_to_pixels", "enabled"), &Viewport::set_snap_controls_to_pixels);
 	ClassDB::bind_method(D_METHOD("is_snap_controls_to_pixels_enabled"), &Viewport::is_snap_controls_to_pixels_enabled);
@@ -5456,6 +5473,7 @@ void Viewport::_bind_methods() {
 	ADD_GROUP("Positional Shadow Atlas", "positional_shadow_atlas_");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "positional_shadow_atlas_size"), "set_positional_shadow_atlas_size", "get_positional_shadow_atlas_size");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "positional_shadow_atlas_16_bits"), "set_positional_shadow_atlas_16_bits", "get_positional_shadow_atlas_16_bits");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "positional_shadow_atlas_static_cache"), "set_positional_shadow_atlas_static_cache", "get_positional_shadow_atlas_static_cache");
 	ADD_PROPERTYI(PropertyInfo(Variant::INT, "positional_shadow_atlas_quad_0", PROPERTY_HINT_ENUM, "Disabled,1 Shadow,4 Shadows,16 Shadows,64 Shadows,256 Shadows,1024 Shadows"), "set_positional_shadow_atlas_quadrant_subdiv", "get_positional_shadow_atlas_quadrant_subdiv", 0);
 	ADD_PROPERTYI(PropertyInfo(Variant::INT, "positional_shadow_atlas_quad_1", PROPERTY_HINT_ENUM, "Disabled,1 Shadow,4 Shadows,16 Shadows,64 Shadows,256 Shadows,1024 Shadows"), "set_positional_shadow_atlas_quadrant_subdiv", "get_positional_shadow_atlas_quadrant_subdiv", 1);
 	ADD_PROPERTYI(PropertyInfo(Variant::INT, "positional_shadow_atlas_quad_2", PROPERTY_HINT_ENUM, "Disabled,1 Shadow,4 Shadows,16 Shadows,64 Shadows,256 Shadows,1024 Shadows"), "set_positional_shadow_atlas_quadrant_subdiv", "get_positional_shadow_atlas_quadrant_subdiv", 2);

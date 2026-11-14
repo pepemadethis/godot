@@ -280,11 +280,23 @@ public:
 
 	virtual void voxel_gi_set_quality(RSE::VoxelGIQuality) = 0;
 
+	// How a positional light's shadow uses the shadow atlas's static cache this frame.
+	enum ShadowStaticCacheMode {
+		SHADOW_STATIC_CACHE_NONE, // `instances` holds every caster; render as usual.
+		SHADOW_STATIC_CACHE_REBUILD, // Draw `instances` (the static casters) into the static cache, then restore it and draw `dynamic_instances` on top.
+		SHADOW_STATIC_CACHE_REUSE, // The static cache is current: restore it and draw `dynamic_instances` on top.
+	};
+
 	struct RenderShadowData {
 		RID light;
 		int pass = 0;
 		PagedArray<RenderGeometryInstance *> instances;
+		PagedArray<RenderGeometryInstance *> dynamic_instances;
+		ShadowStaticCacheMode static_cache_mode = SHADOW_STATIC_CACHE_NONE;
 	};
+
+	// Whether render_scene() understands RenderShadowData's static cache modes.
+	virtual bool shadow_static_cache_is_supported() const { return false; }
 
 	struct RenderSDFGIData {
 		int region = 0;

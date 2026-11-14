@@ -101,6 +101,7 @@ public:
 		RID shadow_atlas;
 		int shadow_atlas_size = 2048;
 		bool shadow_atlas_16_bits = true;
+		bool shadow_atlas_static_cache = false;
 
 		bool sdf_active = false;
 
@@ -274,6 +275,7 @@ public:
 
 	void viewport_set_positional_shadow_atlas_size(RID p_viewport, int p_size, bool p_16_bits = true);
 	void viewport_set_positional_shadow_atlas_quadrant_subdivision(RID p_viewport, int p_quadrant, int p_subdiv);
+	void viewport_set_positional_shadow_atlas_static_cache(RID p_viewport, bool p_enable);
 
 	void viewport_set_msaa_2d(RID p_viewport, RSE::ViewportMSAA p_msaa);
 	void viewport_set_msaa_3d(RID p_viewport, RSE::ViewportMSAA p_msaa);

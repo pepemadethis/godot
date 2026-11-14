@@ -1407,6 +1407,14 @@ void RendererViewport::viewport_set_positional_shadow_atlas_size(RID p_viewport,
 	RSG::light_storage->shadow_atlas_set_size(viewport->shadow_atlas, viewport->shadow_atlas_size, viewport->shadow_atlas_16_bits);
 }
 
+void RendererViewport::viewport_set_positional_shadow_atlas_static_cache(RID p_viewport, bool p_enable) {
+	Viewport *viewport = viewport_owner.get_or_null(p_viewport);
+	ERR_FAIL_NULL(viewport);
+
+	viewport->shadow_atlas_static_cache = p_enable;
+	RSG::light_storage->shadow_atlas_set_static_cache(viewport->shadow_atlas, p_enable);
+}
+
 void RendererViewport::viewport_set_positional_shadow_atlas_quadrant_subdivision(RID p_viewport, int p_quadrant, int p_subdiv) {
 	Viewport *viewport = viewport_owner.get_or_null(p_viewport);
 	ERR_FAIL_NULL(viewport);

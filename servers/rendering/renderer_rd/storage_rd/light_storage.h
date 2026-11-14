@@ -412,6 +412,7 @@ private:
 				uint64_t version = 0;
 				uint64_t fog_version = 0; // used for fog
 				uint64_t alloc_tick = 0;
+				uint64_t static_version = 0; // Version of the owner's static casters held in the static cache; 0 if none.
 
 				Shadow() {}
 			};
@@ -430,12 +431,18 @@ private:
 		RID depth;
 		RID fb; //for copying
 
+		// Static shadow cache: same size, format and layout as `depth`.
+		bool static_cache = false;
+		RID static_depth;
+		RID static_fb;
+
 		HashMap<RID, uint32_t> shadow_owners;
 	};
 
 	RID_Owner<ShadowAtlas> shadow_atlas_owner;
 
 	void _update_shadow_atlas(ShadowAtlas *shadow_atlas);
+	void _shadow_atlas_free_static_cache(ShadowAtlas *shadow_atlas);
 
 	void _shadow_atlas_invalidate_shadow(ShadowAtlas::Quadrant::Shadow *p_shadow, RID p_atlas, ShadowAtlas *p_shadow_atlas, uint32_t p_quadrant, uint32_t p_shadow_idx);
 	bool _shadow_atlas_find_shadow(ShadowAtlas *shadow_atlas, int *p_in_quadrants, int p_quadrant_count, int p_current_subdiv, uint64_t p_tick, int &r_quadrant, int &r_shadow);
@@ -1166,6 +1173,23 @@ public:
 		ERR_FAIL_NULL_V(atlas, RID());
 		return atlas->fb;
 	}
+
+	_FORCE_INLINE_ RID shadow_atlas_get_static_texture(RID p_atlas) {
+		ShadowAtlas *atlas = shadow_atlas_owner.get_or_null(p_atlas);
+		ERR_FAIL_NULL_V(atlas, RID());
+		return atlas->static_depth;
+	}
+
+	_FORCE_INLINE_ RID shadow_atlas_get_static_fb(RID p_atlas) {
+		ShadowAtlas *atlas = shadow_atlas_owner.get_or_null(p_atlas);
+		ERR_FAIL_NULL_V(atlas, RID());
+		return atlas->static_fb;
+	}
+
+	virtual void shadow_atlas_set_static_cache(RID p_atlas, bool p_enable) override;
+	virtual bool shadow_atlas_get_static_cache(RID p_atlas) override;
+	virtual uint64_t shadow_atlas_get_light_static_version(RID p_atlas, RID p_light_instance) override;
+	virtual void shadow_atlas_set_light_static_version(RID p_atlas, RID p_light_instance, uint64_t p_version) override;
 
 	virtual void shadow_atlas_update(RID p_atlas) override;
 	static RD::DataFormat get_shadow_atlas_depth_format(bool p_16_bits);

@@ -209,6 +209,14 @@ public:
 	virtual void shadow_atlas_set_quadrant_subdivision(RID p_atlas, int p_quadrant, int p_subdivision) = 0;
 	virtual bool shadow_atlas_update_light(RID p_atlas, RID p_light_instance, float p_coverage, uint64_t p_light_version) = 0;
 
+	// Static shadow cache: a second atlas that keeps what each positional light's static casters
+	// draw, so a light with only moving casters to update redraws just those. Renderers without
+	// one keep these defaults, and the scene culler then renders shadows as usual.
+	virtual void shadow_atlas_set_static_cache(RID p_atlas, bool p_enable) {}
+	virtual bool shadow_atlas_get_static_cache(RID p_atlas) { return false; }
+	virtual uint64_t shadow_atlas_get_light_static_version(RID p_atlas, RID p_light_instance) { return 0; }
+	virtual void shadow_atlas_set_light_static_version(RID p_atlas, RID p_light_instance, uint64_t p_version) {}
+
 	virtual void shadow_atlas_update(RID p_atlas) = 0;
 
 	virtual void directional_shadow_atlas_set_size(int p_size, bool p_16_bits = true) = 0;

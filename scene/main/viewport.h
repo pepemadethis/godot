@@ -315,6 +315,7 @@ private:
 
 	int positional_shadow_atlas_size = 2048;
 	bool positional_shadow_atlas_16_bits = true;
+	bool positional_shadow_atlas_static_cache = false;
 	PositionalShadowAtlasQuadrantSubdiv positional_shadow_atlas_quadrant_subdiv[4];
 
 	MSAA msaa_2d = MSAA_DISABLED;
@@ -579,6 +580,9 @@ public:
 
 	void set_positional_shadow_atlas_16_bits(bool p_16_bits);
 	bool get_positional_shadow_atlas_16_bits() const;
+
+	void set_positional_shadow_atlas_static_cache(bool p_enable);
+	bool get_positional_shadow_atlas_static_cache() const;
 
 	void set_positional_shadow_atlas_quadrant_subdiv(int p_quadrant, PositionalShadowAtlasQuadrantSubdiv p_subdiv);
 	PositionalShadowAtlasQuadrantSubdiv get_positional_shadow_atlas_quadrant_subdiv(int p_quadrant) const;

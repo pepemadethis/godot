@@ -2396,6 +2396,74 @@ void LightStorage::_update_shadow_atlas(ShadowAtlas *shadow_atlas) {
 		fb_tex.push_back(shadow_atlas->depth);
 		shadow_atlas->fb = RD::get_singleton()->framebuffer_create(fb_tex);
 	}
+
+	if (shadow_atlas->size > 0 && shadow_atlas->static_cache && shadow_atlas->static_depth.is_null()) {
+		RD::TextureFormat tf;
+		tf.format = get_shadow_atlas_depth_format(shadow_atlas->use_16_bits);
+		tf.width = shadow_atlas->size;
+		tf.height = shadow_atlas->size;
+		tf.usage_bits = get_shadow_atlas_depth_usage_bits();
+
+		shadow_atlas->static_depth = RD::get_singleton()->texture_create(tf, RD::TextureView());
+		RD::get_singleton()->set_resource_name(shadow_atlas->static_depth, "Shadow atlas static cache");
+		Vector<RID> fb_tex;
+		fb_tex.push_back(shadow_atlas->static_depth);
+		shadow_atlas->static_fb = RD::get_singleton()->framebuffer_create(fb_tex);
+	}
+}
+
+void LightStorage::_shadow_atlas_free_static_cache(ShadowAtlas *shadow_atlas) {
+	if (shadow_atlas->static_depth.is_valid()) {
+		RD::get_singleton()->free_rid(shadow_atlas->static_depth);
+		shadow_atlas->static_depth = RID();
+		shadow_atlas->static_fb = RID();
+	}
+	for (int i = 0; i < 4; i++) {
+		for (ShadowAtlas::Quadrant::Shadow &shadow : shadow_atlas->quadrants[i].shadows) {
+			shadow.static_version = 0;
+		}
+	}
+}
+
+void LightStorage::shadow_atlas_set_static_cache(RID p_atlas, bool p_enable) {
+	ShadowAtlas *shadow_atlas = shadow_atlas_owner.get_or_null(p_atlas);
+	ERR_FAIL_NULL(shadow_atlas);
+	if (shadow_atlas->static_cache == p_enable) {
+		return;
+	}
+	// The texture is made on the next update; turning the cache off frees it.
+	_shadow_atlas_free_static_cache(shadow_atlas);
+	shadow_atlas->static_cache = p_enable;
+}
+
+bool LightStorage::shadow_atlas_get_static_cache(RID p_atlas) {
+	ShadowAtlas *shadow_atlas = shadow_atlas_owner.get_or_null(p_atlas);
+	ERR_FAIL_NULL_V(shadow_atlas, false);
+	return shadow_atlas->static_cache && shadow_atlas->size > 0;
+}
+
+uint64_t LightStorage::shadow_atlas_get_light_static_version(RID p_atlas, RID p_light_instance) {
+	ShadowAtlas *shadow_atlas = shadow_atlas_owner.get_or_null(p_atlas);
+	ERR_FAIL_NULL_V(shadow_atlas, 0);
+	const uint32_t *key = shadow_atlas->shadow_owners.getptr(p_light_instance);
+	if (!key) {
+		return 0;
+	}
+	uint32_t quadrant = (*key >> QUADRANT_SHIFT) & 0x3;
+	uint32_t shadow = *key & SHADOW_INDEX_MASK;
+	ERR_FAIL_UNSIGNED_INDEX_V(shadow, (uint32_t)shadow_atlas->quadrants[quadrant].shadows.size(), 0);
+	return shadow_atlas->quadrants[quadrant].shadows[shadow].static_version;
+}
+
+void LightStorage::shadow_atlas_set_light_static_version(RID p_atlas, RID p_light_instance, uint64_t p_version) {
+	ShadowAtlas *shadow_atlas = shadow_atlas_owner.get_or_null(p_atlas);
+	ERR_FAIL_NULL(shadow_atlas);
+	const uint32_t *key = shadow_atlas->shadow_owners.getptr(p_light_instance);
+	ERR_FAIL_NULL(key);
+	uint32_t quadrant = (*key >> QUADRANT_SHIFT) & 0x3;
+	uint32_t shadow = *key & SHADOW_INDEX_MASK;
+	ERR_FAIL_UNSIGNED_INDEX(shadow, (uint32_t)shadow_atlas->quadrants[quadrant].shadows.size());
+	shadow_atlas->quadrants[quadrant].shadows.write[shadow].static_version = p_version;
 }
 
 void LightStorage::shadow_atlas_set_size(RID p_atlas, int p_size, bool p_16_bits) {
@@ -2413,6 +2481,7 @@ void LightStorage::shadow_atlas_set_size(RID p_atlas, int p_size, bool p_16_bits
 		RD::get_singleton()->free_rid(shadow_atlas->depth);
 		shadow_atlas->depth = RID();
 	}
+	_shadow_atlas_free_static_cache(shadow_atlas);
 	for (int i = 0; i < 4; i++) {
 		//clear subdivisions
 		shadow_atlas->quadrants[i].shadows.clear();
@@ -2723,6 +2792,7 @@ bool LightStorage::shadow_atlas_update_light(RID p_atlas, RID p_light_instance, 
 		sh->owner = p_light_instance;
 		sh->alloc_tick = tick;
 		sh->version = p_light_version;
+		sh->static_version = 0; // The static cache holds nothing for the new owner yet.
 
 		if (is_omni) {
 			new_key |= OMNI_LIGHT_FLAG;
@@ -2734,6 +2804,7 @@ bool LightStorage::shadow_atlas_update_light(RID p_atlas, RID p_light_instance, 
 			extra_sh->owner = p_light_instance;
 			extra_sh->alloc_tick = tick;
 			extra_sh->version = p_light_version;
+			extra_sh->static_version = 0;
 		}
 
 		li->shadow_atlases.insert(p_atlas);

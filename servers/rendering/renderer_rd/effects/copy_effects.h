@@ -43,6 +43,7 @@
 #include "servers/rendering/renderer_rd/shaders/effects/octmap_filter_raster.glsl.gen.h"
 #include "servers/rendering/renderer_rd/shaders/effects/octmap_roughness.glsl.gen.h"
 #include "servers/rendering/renderer_rd/shaders/effects/octmap_roughness_raster.glsl.gen.h"
+#include "servers/rendering/renderer_rd/shaders/effects/shadow_atlas_copy.glsl.gen.h"
 #include "servers/rendering/renderer_rd/shaders/effects/specular_merge.glsl.gen.h"
 
 namespace RendererRD {
@@ -228,7 +229,16 @@ private:
 		CubeToDpShaderRD shader;
 		RID shader_version;
 		PipelineCacheRD pipeline;
+		PipelineCacheRD pipeline_merge; // Keeps the closer of the existing and the new depth.
 	} cube_to_dp;
+
+	// Copy a rect of the static shadow cache into the shadow atlas.
+
+	struct ShadowAtlasCopy {
+		ShadowAtlasCopyShaderRD shader;
+		RID shader_version;
+		PipelineCacheRD pipeline;
+	} shadow_atlas_copy;
 
 	// Copy to Octmap
 
@@ -386,7 +396,8 @@ public:
 	void set_color(RID p_dest_texture, const Color &p_color, const Rect2i &p_region, bool p_8bit_dst = false);
 	void set_color_raster(RID p_dest_texture, const Color &p_color, const Rect2i &p_region);
 
-	void copy_cubemap_to_dp(RID p_source_rd_texture, RID p_dst_framebuffer, const Rect2 &p_rect, const Vector2 &p_dst_size, float p_z_near, float p_z_far, bool p_dp_flip);
+	void copy_cubemap_to_dp(RID p_source_rd_texture, RID p_dst_framebuffer, const Rect2 &p_rect, const Vector2 &p_dst_size, float p_z_near, float p_z_far, bool p_dp_flip, bool p_merge = false);
+	void copy_shadow_atlas_rect(RID p_source_depth, RID p_dst_framebuffer, const Rect2i &p_rect);
 	void copy_cubemap_to_octmap(RID p_source_rd_texture, RID p_dst_framebuffer, float p_border_size);
 	void octmap_downsample(RID p_source_octmap, RID p_dest_octmap, const Size2i &p_size, float p_border_size);
 	void octmap_downsample_raster(RID p_source_octmap, RID p_dest_framebuffer, const Size2i &p_size, float p_border_size);

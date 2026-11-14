@@ -72,6 +72,13 @@ private:
 	float baked_exposure = 1.0;
 	uint32_t lightprobe_hash = 0;
 
+	// The regular probe grid (LightmapGI.probe_grid_spacing), kept here so it saves without
+	// asking the rendering server for it.
+	AABB probe_grid_bounds; // From the first probe to the last.
+	Vector3i probe_grid_size;
+	PackedByteArray probe_grid_sh; // Half floats, see RenderingServer::lightmap_set_probe_grid().
+	PackedByteArray probe_grid_visibility;
+
 	struct User {
 		NodePath path;
 		int32_t sub_instance = 0;
@@ -93,6 +100,11 @@ protected:
 	static void _bind_methods();
 
 public:
+	// Colors per grid probe while it bakes: its spherical harmonics (bands 0 to 2, 9 coefficients), in
+	// the LightmapGI's axes. The first color's alpha is 1 for a probe that sees out, 0 for one inside
+	// geometry, whose light is filled in from the probes around it.
+	static constexpr int PROBE_GRID_COLORS = 9;
+
 	void add_user(const NodePath &p_path, const Rect2 &p_uv_scale, int p_slice_index, int32_t p_sub_instance = -1);
 	int get_user_count() const;
 	NodePath get_user_path(int p_user) const;
@@ -129,6 +141,14 @@ public:
 	uint32_t get_lightprobe_hash() const;
 
 	AABB get_capture_bounds() const;
+
+	// Probes at a regular grid's points, x fastest, then y, then z (half floats), and which corners
+	// each part of each cell sees: see RenderingServer::lightmap_set_probe_grid().
+	void set_probe_grid(const AABB &p_bounds, const Vector3i &p_size, const PackedByteArray &p_sh, const PackedByteArray &p_visibility);
+	AABB get_probe_grid_bounds() const { return probe_grid_bounds; }
+	Vector3i get_probe_grid_size() const { return probe_grid_size; }
+	PackedByteArray get_probe_grid_sh() const { return probe_grid_sh; }
+	PackedByteArray get_probe_grid_visibility() const { return probe_grid_visibility; }
 
 	void clear();
 
@@ -210,6 +230,10 @@ private:
 	bool use_texture_for_bounces = true;
 	LightmapGIData::ShadowmaskMode shadowmask_mode = LightmapGIData::SHADOWMASK_MODE_NONE;
 	GenerateProbes gen_probes = GENERATE_PROBES_SUBDIV_8;
+	float probe_grid_spacing = 0.0; // 0: no regular grid of probes.
+	static constexpr int MAX_PROBE_GRID_POINTS = 262144;
+	// A grid probe whose rays hit back faces first more often than this is inside geometry.
+	static constexpr float PROBE_GRID_INSIDE_SHARE = 0.25;
 	Ref<CameraAttributes> camera_attributes;
 	float specular_intensity = 0.0f;
 
@@ -276,6 +300,8 @@ private:
 	};
 
 	void _plot_triangle_into_octree(GenProbesOctree *p_cell, float p_cell_size, const Vector3 *p_triangle);
+	static void _fill_probe_grid(const Vector3i &p_count, PackedColorArray &r_sh);
+	static PackedByteArray _probe_grid_visibility(const Vector<Lightmapper::MeshData> &p_meshes, const Vector3 &p_origin, const Vector3 &p_step, const Vector3i &p_count);
 	void _gen_new_positions_from_octree(const GenProbesOctree *p_cell, float p_cell_size, const Vector<Vector3> &probe_positions, LocalVector<Vector3> &new_probe_positions, HashMap<Vector3i, bool> &positions_used, const AABB &p_bounds);
 
 	BakeError _save_and_reimport_atlas_textures(const Ref<Lightmapper> p_lightmapper, const String &p_base_name, TypedArray<TextureLayered> &r_textures, bool p_is_shadowmask = false) const;
@@ -348,6 +374,8 @@ public:
 	float get_supersampling_factor() const;
 
 	void set_generate_probes(GenerateProbes p_generate_probes);
+	void set_probe_grid_spacing(float p_spacing);
+	float get_probe_grid_spacing() const;
 	GenerateProbes get_generate_probes() const;
 
 	void set_camera_attributes(const Ref<CameraAttributes> &p_camera_attributes);

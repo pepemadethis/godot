@@ -1040,12 +1040,8 @@ void RenderForwardClustered::_fill_render_list(RenderListType p_render_list, con
 				if (lightmap_captures_used < scene_state.max_lightmap_captures) {
 					const Color *src_capture = inst->lightmap_sh->sh;
 					LightmapCaptureData &lcd = scene_state.lightmap_captures[lightmap_captures_used];
-					for (int j = 0; j < 9; j++) {
-						lcd.sh[j * 4 + 0] = src_capture[j].r;
-						lcd.sh[j * 4 + 1] = src_capture[j].g;
-						lcd.sh[j * 4 + 2] = src_capture[j].b;
-						lcd.sh[j * 4 + 3] = src_capture[j].a;
-					}
+					static_assert(sizeof(LightmapCaptureData) == sizeof(Color) * RenderGeometryInstance::LIGHTMAP_CAPTURE_COLORS);
+					memcpy(&lcd, src_capture, sizeof(LightmapCaptureData));
 					flags |= INSTANCE_DATA_FLAG_USE_LIGHTMAP_CAPTURE;
 					inst->gi_offset_cache = lightmap_captures_used;
 					lightmap_captures_used++;
@@ -3798,6 +3794,19 @@ RID RenderForwardClustered::_setup_render_pass_uniform_set(RenderListType p_rend
 
 		uniforms.push_back(u);
 	}
+	{
+		// Lightmap probe grids, by slot.
+		RD::Uniform u;
+		u.binding = 39;
+		u.uniform_type = RD::UNIFORM_TYPE_TEXTURE;
+		RID default_tex = texture_storage->texture_rd_get_default(RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_3D_BLACK);
+		constexpr int GRID_TEXTURES = RendererRD::LightStorage::PROBE_GRID_TEXTURES;
+		for (int i = 0; i < RendererRD::LightStorage::MAX_LIGHTMAP_PROBE_GRIDS * GRID_TEXTURES; i++) {
+			RID tex = light_storage->lightmap_probe_grid_get_texture(i / GRID_TEXTURES, i % GRID_TEXTURES);
+			u.append_id(tex.is_valid() ? tex : default_tex);
+		}
+		uniforms.push_back(u);
+	}
 
 	{
 		RD::Uniform u;
@@ -4160,6 +4169,18 @@ RID RenderForwardClustered::_setup_sdfgi_render_pass_uniform_set(RID p_albedo_te
 			u.append_id(default_tex);
 		}
 
+		uniforms.push_back(u);
+	}
+
+	{
+		// No lightmap probe grids.
+		RD::Uniform u;
+		u.binding = 39;
+		u.uniform_type = RD::UNIFORM_TYPE_TEXTURE;
+		RID default_tex = texture_storage->texture_rd_get_default(RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_3D_BLACK);
+		for (int i = 0; i < RendererRD::LightStorage::MAX_LIGHTMAP_PROBE_GRIDS * RendererRD::LightStorage::PROBE_GRID_TEXTURES; i++) {
+			u.append_id(default_tex);
+		}
 		uniforms.push_back(u);
 	}
 
@@ -5250,7 +5271,7 @@ void RenderForwardClustered::GeometryInstanceForwardClustered::set_lightmap_capt
 			lightmap_sh = RenderForwardClustered::get_singleton()->geometry_instance_lightmap_sh.alloc();
 		}
 
-		memcpy(lightmap_sh->sh, p_sh9, sizeof(Color) * 9);
+		memcpy(lightmap_sh->sh, p_sh9, sizeof(Color) * RenderGeometryInstance::LIGHTMAP_CAPTURE_COLORS);
 	} else {
 		if (lightmap_sh != nullptr) {
 			RenderForwardClustered::get_singleton()->geometry_instance_lightmap_sh.free(lightmap_sh);
@@ -5447,6 +5468,8 @@ RenderForwardClustered::RenderForwardClustered() {
 			scene_state.max_lightmaps = MAX_LIGHTMAPS;
 			defines += "\n#define MAX_LIGHTMAP_TEXTURES " + itos(scene_state.max_lightmaps) + "\n";
 			defines += "\n#define MAX_LIGHTMAPS " + itos(scene_state.max_lightmaps) + "\n";
+			defines += "\n#define MAX_LIGHTMAP_PROBE_GRIDS " + itos(RendererRD::LightStorage::MAX_LIGHTMAP_PROBE_GRIDS) + "\n";
+			defines += "\n#define LIGHTMAP_PROBE_GRID_SUBDIV " + itos(RSE::LIGHTMAP_PROBE_GRID_SUBDIV) + "\n";
 
 			scene_state.lightmap_buffer = RD::get_singleton()->storage_buffer_create(sizeof(LightmapData) * scene_state.max_lightmaps);
 		}

@@ -58,6 +58,14 @@ public:
 	virtual void set_use_baked_light(bool p_enable) = 0;
 	virtual void set_use_dynamic_gi(bool p_enable) = 0;
 	virtual void set_use_lightmap(RID p_lightmap_instance, const Rect2 &p_lightmap_uv_scale, int p_lightmap_slice_index) = 0;
+	// Baked light for objects without their own lightmap, LIGHTMAP_CAPTURE_COLORS colors:
+	// 0-8, the L2 spherical harmonics at the object's centre, in world axes; 9-11, the rows of the
+	// affine transform from world space to the lightmap's probe grid (0 at its first probe, 1 a
+	// probe further along an axis); 12-14, the rows of the rotation from world axes to the grid's;
+	// 15, the grid's probe counts and, in alpha, its slot (-1: no grid). Renderers that shade only
+	// with the centre read the first 9.
+	static constexpr int LIGHTMAP_CAPTURE_SH_COLORS = 9;
+	static constexpr int LIGHTMAP_CAPTURE_COLORS = 16;
 	virtual void set_lightmap_capture(const Color *p_sh9) = 0;
 	virtual void set_instance_shader_uniforms_offset(int32_t p_offset) = 0;
 	virtual void set_cast_double_sided_shadows(bool p_enable) = 0;

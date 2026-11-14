@@ -2094,6 +2094,7 @@ void LightStorage::lightmap_initialize(RID p_lightmap) {
 void LightStorage::lightmap_free(RID p_rid) {
 	lightmap_set_textures(p_rid, RID(), false);
 	Lightmap *lightmap = lightmap_owner.get_or_null(p_rid);
+	_lightmap_free_probe_grid(lightmap);
 	lightmap->dependency.deleted_notify(p_rid);
 	lightmap_owner.free(p_rid);
 }
@@ -2175,6 +2176,109 @@ void LightStorage::lightmap_set_probe_capture_data(RID p_lightmap, const PackedV
 	lm->bsp_tree = p_bsp_tree;
 	lm->point_sh = p_point_sh;
 	lm->tetrahedra = p_tetrahedra;
+}
+
+void LightStorage::_lightmap_free_probe_grid(Lightmap *p_lightmap) {
+	if (p_lightmap == nullptr || p_lightmap->probe_grid_slot < 0) {
+		return;
+	}
+	ProbeGridSlot &slot = probe_grid_slots[p_lightmap->probe_grid_slot];
+	for (RID &texture : slot.textures) {
+		if (texture.is_valid()) {
+			RD::get_singleton()->free_rid(texture);
+			texture = RID();
+		}
+	}
+	slot.lightmap = RID();
+	p_lightmap->probe_grid_slot = -1;
+	p_lightmap->probe_grid_size = Vector3i();
+	p_lightmap->probe_grid_bounds = AABB();
+}
+
+void LightStorage::lightmap_set_probe_grid(RID p_lightmap, const AABB &p_bounds, const Vector3i &p_size, const PackedByteArray &p_sh, const PackedByteArray &p_visibility) {
+	Lightmap *lm = lightmap_owner.get_or_null(p_lightmap);
+	ERR_FAIL_NULL(lm);
+
+	_lightmap_free_probe_grid(lm);
+	if (p_sh.is_empty()) {
+		return;
+	}
+	const int64_t point_count = int64_t(p_size.x) * p_size.y * p_size.z;
+	constexpr int VALUES = RSE::LIGHTMAP_PROBE_GRID_VALUES;
+	ERR_FAIL_COND(p_size.x < 2 || p_size.y < 2 || p_size.z < 2 || point_count * VALUES * int64_t(sizeof(uint16_t)) != p_sh.size());
+	constexpr int SUBDIV = RSE::LIGHTMAP_PROBE_GRID_SUBDIV;
+	const Vector3i parts = (p_size - Vector3i(1, 1, 1)) * SUBDIV;
+	ERR_FAIL_COND(!p_visibility.is_empty() && int64_t(parts.x) * parts.y * parts.z != p_visibility.size());
+
+	int32_t slot_index = -1;
+	for (int i = 0; i < MAX_LIGHTMAP_PROBE_GRIDS; i++) {
+		if (probe_grid_slots[i].lightmap.is_null()) {
+			slot_index = i;
+			break;
+		}
+	}
+	ERR_FAIL_COND_MSG(slot_index < 0, vformat("More than %d lightmaps with probe grids are loaded; this one's grid is not used.", MAX_LIGHTMAP_PROBE_GRIDS));
+
+	RD::TextureFormat tf;
+	tf.format = RD::DATA_FORMAT_R16G16B16A16_SFLOAT;
+	tf.width = p_size.x;
+	tf.height = p_size.y;
+	tf.depth = p_size.z;
+	tf.texture_type = RD::TEXTURE_TYPE_3D;
+	tf.usage_bits = RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_CAN_UPDATE_BIT;
+
+	const uint16_t *sh = reinterpret_cast<const uint16_t *>(p_sh.ptr());
+	ProbeGridSlot &slot = probe_grid_slots[slot_index];
+	for (int t = 0; t < PROBE_GRID_VISIBILITY_TEXTURE; t++) {
+		Vector<uint8_t> data;
+		data.resize(point_count * 4 * sizeof(uint16_t));
+		uint16_t *texels = reinterpret_cast<uint16_t *>(data.ptrw());
+		for (int64_t i = 0; i < point_count; i++) {
+			const uint16_t *probe = &sh[i * VALUES]; // Coefficient j's channel c at j * 3 + c.
+			for (int j = 0; j < 4; j++) {
+				if (t < 3) {
+					texels[i * 4 + j] = probe[j * 3 + t]; // Bands 0 and 1 of one channel.
+				} else {
+					const int v = (t - 3) * 4 + j; // Band 2's values in order, from coefficient 4.
+					texels[i * 4 + j] = v < 15 ? probe[12 + v] : 0;
+				}
+			}
+		}
+		Vector<Vector<uint8_t>> layers;
+		layers.push_back(data);
+		slot.textures[t] = RD::get_singleton()->texture_create(tf, RD::TextureView(), layers);
+		RD::get_singleton()->set_resource_name(slot.textures[t], "Lightmap Probe Grid");
+	}
+	{
+		RD::TextureFormat vf;
+		vf.format = RD::DATA_FORMAT_R8_UNORM;
+		vf.width = parts.x;
+		vf.height = parts.y;
+		vf.depth = parts.z;
+		vf.texture_type = RD::TEXTURE_TYPE_3D;
+		vf.usage_bits = RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_CAN_UPDATE_BIT;
+		Vector<uint8_t> visibility = p_visibility;
+		if (visibility.is_empty()) {
+			visibility.resize(int64_t(parts.x) * parts.y * parts.z);
+			memset(visibility.ptrw(), 0xFF, visibility.size()); // Every part sees every corner.
+		}
+		Vector<Vector<uint8_t>> layers;
+		layers.push_back(visibility);
+		slot.textures[PROBE_GRID_VISIBILITY_TEXTURE] = RD::get_singleton()->texture_create(vf, RD::TextureView(), layers);
+		RD::get_singleton()->set_resource_name(slot.textures[PROBE_GRID_VISIBILITY_TEXTURE], "Lightmap Probe Grid Visibility");
+	}
+	slot.lightmap = p_lightmap;
+	lm->probe_grid_slot = slot_index;
+	lm->probe_grid_bounds = p_bounds;
+	lm->probe_grid_size = p_size;
+}
+
+int32_t LightStorage::lightmap_get_probe_grid(RID p_lightmap, AABB &r_bounds, Vector3i &r_size) const {
+	const Lightmap *lm = lightmap_owner.get_or_null(p_lightmap);
+	ERR_FAIL_NULL_V(lm, -1);
+	r_bounds = lm->probe_grid_bounds;
+	r_size = lm->probe_grid_size;
+	return lm->probe_grid_slot;
 }
 
 void LightStorage::lightmap_set_baked_exposure_normalization(RID p_lightmap, float p_exposure) {

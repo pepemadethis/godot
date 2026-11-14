@@ -361,6 +361,14 @@ enum VoxelGIQuality {
 
 /* LIGHTMAP API */
 
+// Half floats a probe in a lightmap's probe grid: its 9 spherical harmonics coefficients (bands 0 to
+// 2), each red, green, blue.
+inline constexpr int LIGHTMAP_PROBE_GRID_VALUES = 27;
+
+// Each cell of a lightmap's probe grid is split into this many parts along each axis for its
+// corner visibility (RenderingServer::lightmap_set_probe_grid()).
+inline constexpr int LIGHTMAP_PROBE_GRID_SUBDIV = 4;
+
 enum ShadowmaskMode {
 	SHADOWMASK_MODE_NONE,
 	SHADOWMASK_MODE_REPLACE,

@@ -780,7 +780,7 @@ void RendererSceneCull::instance_set_base(RID p_instance, RID p_base) {
 				geom->geometry_instance->set_use_lightmap(RID(), instance->lightmap_uv_scale, instance->lightmap_slice_index);
 				geom->geometry_instance->set_instance_shader_uniforms_offset(instance->instance_uniforms.location());
 				geom->geometry_instance->set_cast_double_sided_shadows(instance->cast_shadows == RSE::SHADOW_CASTING_SETTING_DOUBLE_SIDED);
-				if (instance->lightmap_sh.size() == 9) {
+				if (instance->lightmap_sh.size() == RenderGeometryInstance::LIGHTMAP_CAPTURE_COLORS) {
 					geom->geometry_instance->set_lightmap_capture(instance->lightmap_sh.ptr());
 				}
 
@@ -2103,13 +2103,24 @@ void RendererSceneCull::_update_instance_aabb(Instance *p_instance) const {
 }
 
 void RendererSceneCull::_update_instance_lightmap_captures(Instance *p_instance) const {
+	constexpr int SH_COLORS = RenderGeometryInstance::LIGHTMAP_CAPTURE_SH_COLORS;
+	constexpr int CAPTURE_COLORS = RenderGeometryInstance::LIGHTMAP_CAPTURE_COLORS;
 	bool first_set = p_instance->lightmap_sh.is_empty();
-	p_instance->lightmap_sh.resize(9); //using SH
-	p_instance->lightmap_target_sh.resize(9); //using SH
+	p_instance->lightmap_sh.resize(CAPTURE_COLORS); //using SH
+	p_instance->lightmap_target_sh.resize(CAPTURE_COLORS); //using SH
 	Color *instance_sh = p_instance->lightmap_target_sh.ptrw();
 	bool inside = false;
 	Color accum_sh[9];
 	float accum_blend = 0.0;
+	// The probe grid sampled per pixel, the one of the lightmap that weighs most here: world space to
+	// the grid's (in probes) and world axes to its axes, by rows, then its probe counts and slot.
+	constexpr int GRID_COLORS = CAPTURE_COLORS - SH_COLORS;
+	Color grid_colors[GRID_COLORS];
+	for (int j = 0; j < GRID_COLORS; j++) {
+		grid_colors[j] = Color(0, 0, 0, 0);
+	}
+	grid_colors[GRID_COLORS - 1].a = -1.0; // No grid.
+	real_t grid_blend = 0.0;
 
 	InstanceGeometryData *geom = static_cast<InstanceGeometryData *>(p_instance->base_data);
 	// Don't blend if only one lightmap affects the dynamic object.
@@ -2159,6 +2170,21 @@ void RendererSceneCull::_update_instance_lightmap_captures(Instance *p_instance)
 			blend = MAX(0.0, 1.0 - blend);
 		}
 
+		AABB grid_bounds;
+		Vector3i grid_size;
+		const int32_t grid_slot = RSG::light_storage->lightmap_get_probe_grid(lightmap->base, grid_bounds, grid_size);
+		if (grid_slot >= 0 && (blend > grid_blend || (interior && !inside))) {
+			const Vector3 scale = Vector3(grid_size - Vector3i(1, 1, 1)) / grid_bounds.size;
+			const Transform3D to_grid = Transform3D(Basis::from_scale(scale), -grid_bounds.position * scale) * to_bounds;
+			const Basis to_grid_axes = lightmap->transform.basis.orthonormalized().inverse();
+			for (int r = 0; r < 3; r++) {
+				grid_colors[r] = Color(to_grid.basis.rows[r].x, to_grid.basis.rows[r].y, to_grid.basis.rows[r].z, to_grid.origin[r]);
+				grid_colors[3 + r] = Color(to_grid_axes.rows[r].x, to_grid_axes.rows[r].y, to_grid_axes.rows[r].z, 0.0);
+			}
+			grid_colors[6] = Color(grid_size.x, grid_size.y, grid_size.z, grid_slot);
+			grid_blend = blend;
+		}
+
 		if (interior && !inside) {
 			//do not blend, just replace
 			for (int j = 0; j < 9; j++) {
@@ -2181,6 +2207,11 @@ void RendererSceneCull::_update_instance_lightmap_captures(Instance *p_instance)
 				p_instance->lightmap_sh.write[j] = instance_sh[j];
 			}
 		}
+	}
+	// The grid's colors are not eased like the harmonics: they are set at once.
+	for (int j = 0; j < GRID_COLORS; j++) {
+		instance_sh[SH_COLORS + j] = grid_colors[j];
+		p_instance->lightmap_sh.write[SH_COLORS + j] = grid_colors[j];
 	}
 
 	ERR_FAIL_NULL(geom->geometry_instance);
@@ -3452,7 +3483,7 @@ void RendererSceneCull::_scene_cull(CullData &cull_data, InstanceCullResult &cul
 						InstanceGeometryData *geom = static_cast<InstanceGeometryData *>(idata.instance->base_data);
 						Color *sh = idata.instance->lightmap_sh.ptrw();
 						const Color *target_sh = idata.instance->lightmap_target_sh.ptr();
-						for (uint32_t j = 0; j < 9; j++) {
+						for (int j = 0; j < RenderGeometryInstance::LIGHTMAP_CAPTURE_SH_COLORS; j++) {
 							sh[j] = sh[j].lerp(target_sh[j], MIN(1.0, lightmap_probe_update_speed));
 						}
 						ERR_FAIL_NULL(geom->geometry_instance);

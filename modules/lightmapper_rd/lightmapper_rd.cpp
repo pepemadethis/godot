@@ -2109,6 +2109,7 @@ LightmapperRD::BakeError LightmapperRD::bake(BakeQuality p_quality, bool p_use_d
 			} break;
 		}
 
+		push_constant.ray_count = MAX(push_constant.ray_count, uint32_t(MAX(min_probe_ray_count, 0)));
 		push_constant.ray_count = CLAMP(push_constant.ray_count, 16u, 8192u);
 		push_constant.probe_count = probe_positions.size();
 

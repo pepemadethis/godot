@@ -3150,6 +3150,9 @@
 		<member name="rendering/lightmapping/bake_quality/medium_quality_ray_count" type="int" setter="" getter="" default="128">
 			The number of rays to use for baking lightmaps with [LightmapGI] when [member LightmapGI.quality] is [constant LightmapGI.BAKE_QUALITY_MEDIUM].
 		</member>
+		<member name="rendering/lightmapping/bake_quality/probe_grid_ray_count" type="int" setter="" getter="" default="4096">
+			The least number of rays to use for each probe when a [LightmapGI] bakes a probe grid ([member LightmapGI.probe_grid_spacing]), whatever its [member LightmapGI.quality]. A grid is sampled per pixel, where too few rays show as blotches the size of the grid's spacing.
+		</member>
 		<member name="rendering/lightmapping/bake_quality/ultra_quality_probe_ray_count" type="int" setter="" getter="" default="2048">
 			The number of rays to use for baking dynamic object lighting in [LightmapProbe]s when [member LightmapGI.quality] is [constant LightmapGI.BAKE_QUALITY_ULTRA].
 		</member>

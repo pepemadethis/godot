@@ -66,6 +66,11 @@
 			The maximum texture size for the generated texture atlas. Higher values will result in fewer slices being generated, but may not work on all hardware as a result of hardware limitations on texture sizes. Leave [member max_texture_size] at its default value of [code]16384[/code] if unsure.
 			[b]Note:[/b] If [member supersampling] is enabled, the texture atlas used while baking may be up to [member supersampling_factor] times larger than [member max_texture_size], since it's downsampled before saving.
 		</member>
+		<member name="probe_grid_spacing" type="float" setter="set_probe_grid_spacing" getter="get_probe_grid_spacing" default="0.0">
+			If above [code]0.0[/code], the bake also places light probes on a regular grid through the whole lightmap volume, this far apart (in meters), and dynamic objects take their indirect light per pixel from it instead of from a single sample at their center. A large object, or one standing half in light, is then lit by the light where each part of it is. The grid is kept apart from the probes of [member generate_probes_subdiv], which still light dynamic objects in renderers that cannot sample it (the Forward+ renderer can).
+			Probes inside geometry take their light from the probes around them, and a dynamic object is not lit by probes that it cannot see from where it is, so light does not pass through floors and walls thinner than the spacing. The spacing grows if the grid would hold more than 262,144 probes.
+			[b]Note:[/b] Smaller spacings give more accurate lighting at the cost of longer bakes, larger files and more video memory (about 120 bytes a probe). Each probe is baked with at least [member ProjectSettings.rendering/lightmapping/bake_quality/probe_grid_ray_count] rays.
+		</member>
 		<member name="quality" type="int" setter="set_bake_quality" getter="get_bake_quality" enum="LightmapGI.BakeQuality" default="1">
 			The quality preset to use when baking lightmaps. This affects bake times, but output file sizes remain mostly identical across quality levels.
 			To further speed up bake times, decrease [member bounces], disable [member use_denoiser] and/or decrease [member texel_scale].

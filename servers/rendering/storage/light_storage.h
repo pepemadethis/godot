@@ -178,6 +178,11 @@ public:
 	virtual void lightmap_set_probe_interior(RID p_lightmap, bool p_interior) = 0;
 	virtual void lightmap_set_probe_capture_data(RID p_lightmap, const PackedVector3Array &p_points, const PackedColorArray &p_point_sh, const PackedInt32Array &p_tetrahedra, const PackedInt32Array &p_bsp_tree) = 0;
 	virtual void lightmap_set_baked_exposure_normalization(RID p_lightmap, float p_exposure) = 0;
+	// A regular probe grid for per-pixel sampling (RenderingServer::lightmap_set_probe_grid). Renderers
+	// that cannot sample one keep these defaults: the grid is ignored and objects use their captures.
+	virtual void lightmap_set_probe_grid(RID p_lightmap, const AABB &p_bounds, const Vector3i &p_size, const PackedByteArray &p_sh, const PackedByteArray &p_visibility) {}
+	// The grid's slot in the renderer (-1 if none), its bounds from first probe to last, and its size.
+	virtual int32_t lightmap_get_probe_grid(RID p_lightmap, AABB &r_bounds, Vector3i &r_size) const { return -1; }
 	virtual PackedVector3Array lightmap_get_probe_capture_points(RID p_lightmap) const = 0;
 	virtual PackedColorArray lightmap_get_probe_capture_sh(RID p_lightmap) const = 0;
 	virtual PackedInt32Array lightmap_get_probe_capture_tetrahedra(RID p_lightmap) const = 0;

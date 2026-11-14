@@ -37,8 +37,10 @@
 #include "core/io/resource_saver.h"
 #include "core/math/delaunay_3d.h"
 #include "core/math/geometry_3d.h"
+#include "core/math/static_raycaster.h"
 #include "core/object/class_db.h"
 #include "core/object/object.h"
+#include "core/object/worker_thread_pool.h"
 #include "scene/3d/light_3d.h"
 #include "scene/3d/lightmap_probe.h"
 #include "scene/3d/mesh_instance_3d.h"
@@ -283,6 +285,25 @@ AABB LightmapGIData::get_capture_bounds() const {
 	return bounds;
 }
 
+void LightmapGIData::set_probe_grid(const AABB &p_bounds, const Vector3i &p_size, const PackedByteArray &p_sh, const PackedByteArray &p_visibility) {
+	if (p_sh.is_empty()) {
+		probe_grid_bounds = AABB();
+		probe_grid_size = Vector3i();
+		probe_grid_sh.clear();
+		probe_grid_visibility.clear();
+	} else {
+		ERR_FAIL_COND(p_size.x < 2 || p_size.y < 2 || p_size.z < 2);
+		ERR_FAIL_COND(int64_t(p_size.x) * p_size.y * p_size.z * RSE::LIGHTMAP_PROBE_GRID_VALUES * int64_t(sizeof(uint16_t)) != p_sh.size());
+		const Vector3i parts = (p_size - Vector3i(1, 1, 1)) * RSE::LIGHTMAP_PROBE_GRID_SUBDIV;
+		ERR_FAIL_COND(!p_visibility.is_empty() && int64_t(parts.x) * parts.y * parts.z != p_visibility.size());
+		probe_grid_bounds = p_bounds;
+		probe_grid_size = p_size;
+		probe_grid_sh = p_sh;
+		probe_grid_visibility = p_visibility;
+	}
+	RS::get_singleton()->lightmap_set_probe_grid(lightmap, probe_grid_bounds, probe_grid_size, probe_grid_sh, probe_grid_visibility);
+}
+
 bool LightmapGIData::is_interior() const {
 	return interior;
 }
@@ -305,6 +326,11 @@ void LightmapGIData::_set_probe_data(const Dictionary &p_data) {
 		phash = p_data["lightprobe_hash"];
 	}
 	set_capture_data(p_data["bounds"], p_data["interior"], p_data["points"], p_data["sh"], p_data["tetrahedra"], p_data["bsp"], p_data["baked_exposure"], phash);
+	if (p_data.has("grid_sh")) {
+		set_probe_grid(p_data["grid_bounds"], p_data["grid_size"], p_data["grid_sh"], p_data.get("grid_visibility", PackedByteArray()));
+	} else {
+		set_probe_grid(AABB(), Vector3i(), PackedByteArray(), PackedByteArray());
+	}
 }
 
 Dictionary LightmapGIData::_get_probe_data() const {
@@ -317,6 +343,12 @@ Dictionary LightmapGIData::_get_probe_data() const {
 	d["interior"] = is_interior();
 	d["baked_exposure"] = get_baked_exposure();
 	d["lightprobe_hash"] = lightprobe_hash;
+	if (!probe_grid_sh.is_empty()) {
+		d["grid_bounds"] = probe_grid_bounds;
+		d["grid_size"] = probe_grid_size;
+		d["grid_sh"] = probe_grid_sh;
+		d["grid_visibility"] = probe_grid_visibility;
+	}
 	return d;
 }
 
@@ -835,6 +867,178 @@ void LightmapGI::_gen_new_positions_from_octree(const GenProbesOctree *p_cell, f
 	}
 }
 
+void LightmapGI::_fill_probe_grid(const Vector3i &p_count, PackedColorArray &r_sh) {
+	// Probes inside geometry (the first color's alpha 0) see the insides of walls and floors, and
+	// would darken everything sampled near them. Each takes the average of the outside probes
+	// around it instead, spreading inwards a cell per pass.
+	constexpr int COLORS = LightmapGIData::PROBE_GRID_COLORS;
+	const int point_count = p_count.x * p_count.y * p_count.z;
+	ERR_FAIL_COND(r_sh.size() != point_count * COLORS);
+	Color *sh = r_sh.ptrw();
+
+	LocalVector<uint8_t> known;
+	known.resize(point_count);
+	int unknown = 0;
+	for (int i = 0; i < point_count; i++) {
+		known[i] = sh[i * COLORS].a > 0.5;
+		unknown += known[i] ? 0 : 1;
+	}
+
+	struct Filled {
+		int index;
+		Color sh[COLORS];
+	};
+	LocalVector<Filled> filled;
+	while (unknown > 0) {
+		filled.clear();
+		for (int z = 0; z < p_count.z; z++) {
+			for (int y = 0; y < p_count.y; y++) {
+				for (int x = 0; x < p_count.x; x++) {
+					const int index = x + p_count.x * (y + p_count.y * z);
+					if (known[index]) {
+						continue;
+					}
+					Filled f;
+					f.index = index;
+					float weight = 0.0;
+					for (int dz = -1; dz <= 1; dz++) {
+						for (int dy = -1; dy <= 1; dy++) {
+							for (int dx = -1; dx <= 1; dx++) {
+								const Vector3i n(x + dx, y + dy, z + dz);
+								if (n.x < 0 || n.y < 0 || n.z < 0 || n.x >= p_count.x || n.y >= p_count.y || n.z >= p_count.z) {
+									continue;
+								}
+								const int n_index = n.x + p_count.x * (n.y + p_count.y * n.z);
+								if (!known[n_index]) {
+									continue;
+								}
+								const float w = 1.0 / float(dx * dx + dy * dy + dz * dz); // Faces first, then edges, then corners.
+								for (int j = 0; j < COLORS; j++) {
+									f.sh[j] += sh[n_index * COLORS + j] * w;
+								}
+								weight += w;
+							}
+						}
+					}
+					if (weight > 0.0) {
+						for (int j = 0; j < COLORS; j++) {
+							f.sh[j] /= weight;
+						}
+						filled.push_back(f);
+					}
+				}
+			}
+		}
+		if (filled.is_empty()) {
+			break; // No outside probe anywhere: keep what was measured.
+		}
+		for (const Filled &f : filled) {
+			for (int j = 0; j < COLORS; j++) {
+				sh[f.index * COLORS + j] = f.sh[j];
+			}
+			sh[f.index * COLORS].a = 0.0; // Still marked as inside.
+			known[f.index] = 1;
+		}
+		unknown -= filled.size();
+	}
+}
+
+struct ProbeGridVisibilityTask {
+	Ref<StaticRaycaster> raycaster;
+	Vector3 origin;
+	Vector3 step;
+	Vector3i parts;
+	uint8_t *visibility = nullptr;
+};
+
+static void _probe_grid_visibility_layer(void *p_userdata, uint32_t p_z) {
+	const ProbeGridVisibilityTask &task = *static_cast<ProbeGridVisibilityTask *>(p_userdata);
+	constexpr int SUBDIV = RSE::LIGHTMAP_PROBE_GRID_SUBDIV;
+	for (int y = 0; y < task.parts.y; y++) {
+		for (int x = 0; x < task.parts.x; x++) {
+			const Vector3i part(x, y, p_z);
+			const Vector3i cell = part / SUBDIV;
+			const Vector3 centre = task.origin + task.step * (Vector3(part) + Vector3(0.5, 0.5, 0.5)) / SUBDIV;
+			uint8_t seen = 0;
+			for (int k = 0; k < 8; k++) {
+				const Vector3 corner = task.origin + task.step * Vector3(cell + Vector3i(k & 1, (k >> 1) & 1, (k >> 2) & 1));
+				const Vector3 to_corner = corner - centre;
+				const real_t distance = to_corner.length();
+				// Stop just short of the probe: one lying on a surface still counts as seen from its open side.
+				StaticRaycaster::Ray ray(centre, to_corner / distance, 0.0, distance * 0.999);
+				if (!task.raycaster->intersect(ray)) {
+					seen |= 1 << k;
+				}
+			}
+			task.visibility[x + task.parts.x * (y + task.parts.y * int64_t(p_z))] = seen;
+		}
+	}
+}
+
+PackedByteArray LightmapGI::_probe_grid_visibility(const Vector<Lightmapper::MeshData> &p_meshes, const Vector3 &p_origin, const Vector3 &p_step, const Vector3i &p_count) {
+	// For each part of each cell, which of the cell's 8 corner probes its centre sees: a floor or a
+	// wall thinner than a cell lies between the probes on its two sides, and without this a moving
+	// object beside it would take light from the far side.
+	ProbeGridVisibilityTask task;
+	task.raycaster = StaticRaycaster::create();
+	if (task.raycaster.is_null()) {
+		return PackedByteArray(); // No ray tracer in this build: every part sees every corner.
+	}
+	for (int i = 0; i < p_meshes.size(); i++) {
+		task.raycaster->add_mesh(PackedVector3Array(p_meshes[i].points), PackedInt32Array(), i);
+	}
+	task.raycaster->commit();
+
+	constexpr int SUBDIV = RSE::LIGHTMAP_PROBE_GRID_SUBDIV;
+	task.origin = p_origin;
+	task.step = p_step;
+	task.parts = (p_count - Vector3i(1, 1, 1)) * SUBDIV;
+	PackedByteArray visibility;
+	visibility.resize(int64_t(task.parts.x) * task.parts.y * task.parts.z);
+	task.visibility = visibility.ptrw();
+	WorkerThreadPool::GroupID group = WorkerThreadPool::get_singleton()->add_native_group_task(&_probe_grid_visibility_layer, &task, task.parts.z, -1, true, String("LightmapGI probe grid visibility"));
+	WorkerThreadPool::get_singleton()->wait_for_group_task_completion(group);
+
+	// A part whose centre is inside geometry sees nothing; it takes what the parts beside it in the
+	// same cell see, so the surface of an object touching a floor or wall still has corners to use.
+	uint8_t *seen = visibility.ptrw();
+	for (int pass = 0; pass < SUBDIV; pass++) {
+		LocalVector<Pair<int64_t, uint8_t>> filled;
+		for (int z = 0; z < task.parts.z; z++) {
+			for (int y = 0; y < task.parts.y; y++) {
+				for (int x = 0; x < task.parts.x; x++) {
+					const int64_t index = x + task.parts.x * (y + task.parts.y * int64_t(z));
+					if (seen[index] != 0) {
+						continue;
+					}
+					const Vector3i part(x, y, z);
+					uint8_t merged = 0;
+					for (int a = 0; a < 3; a++) {
+						for (int side = -1; side <= 1; side += 2) {
+							Vector3i n = part;
+							n[a] += side;
+							if (n[a] < 0 || n[a] >= task.parts[a] || n[a] / SUBDIV != part[a] / SUBDIV) {
+								continue; // Outside the grid, or in another cell (whose corners are others).
+							}
+							merged |= seen[n.x + task.parts.x * (n.y + task.parts.y * int64_t(n.z))];
+						}
+					}
+					if (merged != 0) {
+						filled.push_back(Pair<int64_t, uint8_t>(index, merged));
+					}
+				}
+			}
+		}
+		if (filled.is_empty()) {
+			break;
+		}
+		for (const Pair<int64_t, uint8_t> &f : filled) {
+			seen[f.first] = f.second;
+		}
+	}
+	return visibility;
+}
+
 LightmapGI::BakeError LightmapGI::_save_and_reimport_atlas_textures(const Ref<Lightmapper> p_lightmapper, const String &p_base_name, TypedArray<TextureLayered> &r_textures, bool p_is_shadowmask) const {
 	Vector<Ref<Image>> images;
 	images.resize(p_is_shadowmask ? p_lightmapper->get_shadowmask_texture_count() : p_lightmapper->get_bake_texture_count());
@@ -1336,6 +1540,38 @@ LightmapGI::BakeError LightmapGI::bake(Node *p_from_node, String p_image_data_pa
 		}
 	}
 
+	// A regular grid of probes through the whole volume, which renderers can sample per pixel.
+	// Generated probes sit near surfaces only, so open space, where moving objects are, gets few,
+	// and light there, like the light a lit floor throws up, is lost between them. The grid is
+	// baked with the other probes but kept apart from them (a regular grid is a poor input for
+	// the tetrahedral network, and would make it far larger).
+	Vector3i grid_count;
+	LocalVector<Vector3> grid_points;
+	if (probe_grid_spacing > 0.0) {
+		float spacing = probe_grid_spacing;
+		while (true) {
+			for (int a = 0; a < 3; a++) {
+				grid_count[a] = MAX(2, int(Math::ceil(bounds.size[a] / spacing)) + 1);
+			}
+			if (int64_t(grid_count.x) * grid_count.y * grid_count.z <= MAX_PROBE_GRID_POINTS) {
+				break;
+			}
+			spacing *= 1.25;
+		}
+		if (spacing != probe_grid_spacing) {
+			WARN_PRINT(vformat("LightmapGI: probe grid spacing raised to %.2f m to keep it under %d probes.", spacing, MAX_PROBE_GRID_POINTS));
+		}
+		const Vector3 step = bounds.size / Vector3(grid_count - Vector3i(1, 1, 1));
+		grid_points.reserve(grid_count.x * grid_count.y * grid_count.z);
+		for (int z = 0; z < grid_count.z; z++) {
+			for (int y = 0; y < grid_count.y; y++) {
+				for (int x = 0; x < grid_count.x; x++) {
+					grid_points.push_back(bounds.position + step * Vector3(x, y, z));
+				}
+			}
+		}
+	}
+
 	// Add everything to lightmapper
 	const bool use_physical_light_units = GLOBAL_GET("rendering/lights_and_shadows/use_physical_light_units");
 	if (p_bake_step) {
@@ -1421,6 +1657,13 @@ LightmapGI::BakeError LightmapGI::bake(Node *p_from_node, String p_image_data_pa
 		}
 		for (int i = 0; i < probes_found.size(); i++) {
 			lightmapper->add_probe(probes_found[i]);
+		}
+		for (const Vector3 &point : grid_points) {
+			lightmapper->add_probe(point); // After the others: results past probes_found.size() are the grid's.
+		}
+		if (!grid_points.is_empty()) {
+			// A grid is sampled per pixel, where each probe's noise shows as blotches.
+			lightmapper->set_min_probe_ray_count(GLOBAL_GET("rendering/lightmapping/bake_quality/probe_grid_ray_count"));
 		}
 	}
 
@@ -1550,7 +1793,10 @@ LightmapGI::BakeError LightmapGI::bake(Node *p_from_node, String p_image_data_pa
 		gi_data->add_user(np, uv_scale, slice_index, subindex);
 	}
 
-	int probe_count = lightmapper->get_bake_probe_count();
+	// The grid's probes come after the others.
+	const int grid_probe_count = grid_points.size();
+	const int probe_count = lightmapper->get_bake_probe_count() - grid_probe_count;
+	ERR_FAIL_COND_V(probe_count < 0, BAKE_ERROR_MESHES_INVALID);
 
 	// Probe SH may change between bakes.
 	LocalVector<Color> probe_sh;
@@ -1572,6 +1818,49 @@ LightmapGI::BakeError LightmapGI::bake(Node *p_from_node, String p_image_data_pa
 		for (int j = 0; j < 9; j++) {
 			probe_sh[i * 9 + j] = colors[j];
 		}
+		probe_sh[i * 9].a = 0.0; // The lightmapper's inside-geometry count; only the grid uses it.
+	}
+
+	if (grid_probe_count > 0) {
+		PackedColorArray grid_sh;
+		grid_sh.resize(grid_probe_count * LightmapGIData::PROBE_GRID_COLORS);
+		Color *grid_ptr = grid_sh.ptrw();
+		for (int i = 0; i < grid_probe_count; i++) {
+			Vector<Color> colors = lightmapper->get_bake_probe_sh(probe_count + i);
+			ERR_CONTINUE(colors.size() != 9);
+			for (int j = 0; j < LightmapGIData::PROBE_GRID_COLORS; j++) {
+				grid_ptr[i * LightmapGIData::PROBE_GRID_COLORS + j] = Color(colors[j].r, colors[j].g, colors[j].b, 0.0);
+			}
+			// The first coefficient's alpha holds 4 x the share of the probe's rays that hit a back face first.
+			const float inside_share = colors[0].a * 0.25;
+			grid_ptr[i * LightmapGIData::PROBE_GRID_COLORS].a = inside_share > PROBE_GRID_INSIDE_SHARE ? 0.0 : 1.0;
+		}
+		int inside_count = 0;
+		for (int i = 0; i < grid_probe_count; i++) {
+			inside_count += grid_ptr[i * LightmapGIData::PROBE_GRID_COLORS].a < 0.5 ? 1 : 0;
+		}
+		print_verbose(vformat("LightmapGI: probe grid %s, %d probes, %d of them inside geometry.", grid_count, grid_probe_count, inside_count));
+		_fill_probe_grid(grid_count, grid_sh);
+
+		// Stored as half floats: each probe's 9 coefficients, each red, green, blue.
+		constexpr int VALUES = RSE::LIGHTMAP_PROBE_GRID_VALUES;
+		PackedByteArray grid_halfs;
+		grid_halfs.resize(int64_t(grid_probe_count) * VALUES * sizeof(uint16_t));
+		uint16_t *halfs = reinterpret_cast<uint16_t *>(grid_halfs.ptrw());
+		for (int i = 0; i < grid_probe_count; i++) {
+			for (int j = 0; j < LightmapGIData::PROBE_GRID_COLORS; j++) {
+				for (int c = 0; c < 3; c++) {
+					halfs[i * VALUES + j * 3 + c] = Math::make_half_float(grid_ptr[i * LightmapGIData::PROBE_GRID_COLORS + j][c]);
+				}
+			}
+		}
+
+		const AABB grid_bounds(grid_points[0], grid_points[grid_probe_count - 1] - grid_points[0]);
+		const Vector3 step = grid_bounds.size / Vector3(grid_count - Vector3i(1, 1, 1));
+		const PackedByteArray visibility = _probe_grid_visibility(mesh_data, grid_bounds.position, step, grid_count);
+		gi_data->set_probe_grid(grid_bounds, grid_count, grid_halfs, visibility);
+	} else {
+		gi_data->set_probe_grid(AABB(), Vector3i(), PackedByteArray(), PackedByteArray());
 	}
 
 	// If the probe hash doesn't match, build the BSP tree from scratch.
@@ -1994,6 +2283,14 @@ float LightmapGI::get_supersampling_factor() const {
 	return supersampling_factor;
 }
 
+void LightmapGI::set_probe_grid_spacing(float p_spacing) {
+	probe_grid_spacing = MAX(0.0f, p_spacing);
+}
+
+float LightmapGI::get_probe_grid_spacing() const {
+	return probe_grid_spacing;
+}
+
 void LightmapGI::set_generate_probes(GenerateProbes p_generate_probes) {
 	gen_probes = p_generate_probes;
 }
@@ -2094,6 +2391,8 @@ void LightmapGI::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("get_bounce_indirect_energy"), &LightmapGI::get_bounce_indirect_energy);
 
 	ClassDB::bind_method(D_METHOD("set_generate_probes", "subdivision"), &LightmapGI::set_generate_probes);
+	ClassDB::bind_method(D_METHOD("set_probe_grid_spacing", "spacing"), &LightmapGI::set_probe_grid_spacing);
+	ClassDB::bind_method(D_METHOD("get_probe_grid_spacing"), &LightmapGI::get_probe_grid_spacing);
 	ClassDB::bind_method(D_METHOD("get_generate_probes"), &LightmapGI::get_generate_probes);
 
 	ClassDB::bind_method(D_METHOD("set_bias", "bias"), &LightmapGI::set_bias);
@@ -2178,6 +2477,7 @@ void LightmapGI::_bind_methods() {
 
 	ADD_GROUP("Gen Probes", "generate_probes_");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "generate_probes_subdiv", PROPERTY_HINT_ENUM, "Disabled,4,8,16,32"), "set_generate_probes", "get_generate_probes");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "probe_grid_spacing", PROPERTY_HINT_RANGE, "0,4,0.05,or_greater,suffix:m"), "set_probe_grid_spacing", "get_probe_grid_spacing");
 	ADD_GROUP("Data", "");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "light_data", PROPERTY_HINT_RESOURCE_TYPE, LightmapGIData::get_class_static()), "set_light_data", "get_light_data");
 

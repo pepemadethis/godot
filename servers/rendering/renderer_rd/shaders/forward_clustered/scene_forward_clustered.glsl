@@ -1824,16 +1824,71 @@ void fragment_shader(in SceneData scene_data) {
 				0.429043 // l2p2 				sqrt(15.0/(16.0*PI))* PI*1.0/4.0
 		);
 
-		ambient_light += (c[0] * lightmap_captures.data[index].sh[0].rgb +
-								 c[1] * lightmap_captures.data[index].sh[1].rgb * wnormal.y +
-								 c[1] * lightmap_captures.data[index].sh[2].rgb * wnormal.z +
-								 c[1] * lightmap_captures.data[index].sh[3].rgb * wnormal.x +
-								 c[2] * lightmap_captures.data[index].sh[4].rgb * wnormal.x * wnormal.y +
-								 c[2] * lightmap_captures.data[index].sh[5].rgb * wnormal.y * wnormal.z +
-								 c[3] * lightmap_captures.data[index].sh[6].rgb * (3.0 * wnormal.z * wnormal.z - 1.0) +
-								 c[2] * lightmap_captures.data[index].sh[7].rgb * wnormal.x * wnormal.z +
-								 c[4] * lightmap_captures.data[index].sh[8].rgb * (wnormal.x * wnormal.x - wnormal.y * wnormal.y)) *
-				scene_data.IBL_exposure_normalization;
+		// Per pixel from the lightmap's probe grid if it has one, else from the object's centre.
+		vec3 band01;
+		vec3 band2;
+		vec4 grid_info = lightmap_captures.data[index].grid_info;
+		int probe_grid = int(grid_info.w);
+		if (probe_grid >= 0) {
+			// Where the pixel is in the grid, in probes, and in which cell.
+			vec4 world_pos = vec4((inv_view_matrix * vec4(vertex, 1.0)).xyz, 1.0);
+			vec3 grid_pos = vec3(dot(lightmap_captures.data[index].grid_xform[0], world_pos), dot(lightmap_captures.data[index].grid_xform[1], world_pos), dot(lightmap_captures.data[index].grid_xform[2], world_pos));
+			vec3 cell = clamp(floor(grid_pos), vec3(0.0), grid_info.xyz - vec3(2.0));
+			vec3 f = clamp(grid_pos - cell, vec3(0.0), vec3(1.0));
+
+			// Leave out the cell's corner probes that the pixel's part of the cell cannot see (through a
+			// floor or a wall thinner than the cell): the corners it sees share their trilinear weights,
+			// and the one filtered sample is moved to where its weights match theirs along each axis.
+			ivec3 part = ivec3(cell) * LIGHTMAP_PROBE_GRID_SUBDIV + min(ivec3(f * float(LIGHTMAP_PROBE_GRID_SUBDIV)), ivec3(LIGHTMAP_PROBE_GRID_SUBDIV - 1));
+			int grid_texture = probe_grid * LIGHTMAP_PROBE_GRID_TEXTURES;
+			uint visible = uint(texelFetch(sampler3D(lightmap_probe_grids[grid_texture + 7], SAMPLER_NEAREST_CLAMP), part, 0).r * 255.0 + 0.5);
+			if (visible != 0u && visible != 0xFFu) {
+				vec3 towards = vec3(0.0);
+				float total = 0.0;
+				for (uint k = 0u; k < 8u; k++) {
+					if (bool(visible & (1u << k))) {
+						vec3 corner = vec3(uvec3(k, k >> 1u, k >> 2u) & uvec3(1u));
+						vec3 w3 = mix(vec3(1.0) - f, f, corner);
+						float w = w3.x * w3.y * w3.z;
+						towards += corner * w;
+						total += w;
+					}
+				}
+				if (total > 1e-6) {
+					f = towards / total;
+				}
+			}
+			vec3 grid_uvw = (cell + f + vec3(0.5)) / grid_info.xyz;
+
+			vec3 grid_normal = vec3(dot(lightmap_captures.data[index].grid_normal[0].xyz, wnormal), dot(lightmap_captures.data[index].grid_normal[1].xyz, wnormal), dot(lightmap_captures.data[index].grid_normal[2].xyz, wnormal));
+			vec4 basis = vec4(c[0], c[1] * grid_normal.y, c[1] * grid_normal.z, c[1] * grid_normal.x);
+			band01 = vec3(
+					dot(textureLod(sampler3D(lightmap_probe_grids[grid_texture + 0], SAMPLER_LINEAR_CLAMP), grid_uvw, 0.0), basis),
+					dot(textureLod(sampler3D(lightmap_probe_grids[grid_texture + 1], SAMPLER_LINEAR_CLAMP), grid_uvw, 0.0), basis),
+					dot(textureLod(sampler3D(lightmap_probe_grids[grid_texture + 2], SAMPLER_LINEAR_CLAMP), grid_uvw, 0.0), basis));
+			// Band 2, its 15 values in order: l2n2, l2n1, l20, l2p1, l2p2, each red, green, blue.
+			vec4 b0 = textureLod(sampler3D(lightmap_probe_grids[grid_texture + 3], SAMPLER_LINEAR_CLAMP), grid_uvw, 0.0);
+			vec4 b1 = textureLod(sampler3D(lightmap_probe_grids[grid_texture + 4], SAMPLER_LINEAR_CLAMP), grid_uvw, 0.0);
+			vec4 b2 = textureLod(sampler3D(lightmap_probe_grids[grid_texture + 5], SAMPLER_LINEAR_CLAMP), grid_uvw, 0.0);
+			vec4 b3 = textureLod(sampler3D(lightmap_probe_grids[grid_texture + 6], SAMPLER_LINEAR_CLAMP), grid_uvw, 0.0);
+			band2 = c[2] * b0.xyz * grid_normal.x * grid_normal.y +
+					c[2] * vec3(b0.w, b1.xy) * grid_normal.y * grid_normal.z +
+					c[3] * vec3(b1.zw, b2.x) * (3.0 * grid_normal.z * grid_normal.z - 1.0) +
+					c[2] * b2.yzw * grid_normal.x * grid_normal.z +
+					c[4] * b3.xyz * (grid_normal.x * grid_normal.x - grid_normal.y * grid_normal.y);
+		} else {
+			band01 = c[0] * lightmap_captures.data[index].sh[0].rgb +
+					c[1] * lightmap_captures.data[index].sh[1].rgb * wnormal.y +
+					c[1] * lightmap_captures.data[index].sh[2].rgb * wnormal.z +
+					c[1] * lightmap_captures.data[index].sh[3].rgb * wnormal.x;
+			band2 = c[2] * lightmap_captures.data[index].sh[4].rgb * wnormal.x * wnormal.y +
+					c[2] * lightmap_captures.data[index].sh[5].rgb * wnormal.y * wnormal.z +
+					c[3] * lightmap_captures.data[index].sh[6].rgb * (3.0 * wnormal.z * wnormal.z - 1.0) +
+					c[2] * lightmap_captures.data[index].sh[7].rgb * wnormal.x * wnormal.z +
+					c[4] * lightmap_captures.data[index].sh[8].rgb * (wnormal.x * wnormal.x - wnormal.y * wnormal.y);
+		}
+
+		ambient_light += (band01 + band2) * scene_data.IBL_exposure_normalization;
 
 	} else if (bool(instances.data[instance_index].flags & INSTANCE_FLAGS_USE_LIGHTMAP)) { // has actual lightmap
 		bool uses_sh = bool(instances.data[instance_index].flags & INSTANCE_FLAGS_USE_SH_LIGHTMAP);

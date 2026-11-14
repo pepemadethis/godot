@@ -709,6 +709,12 @@ void trace_direct_light(vec3 p_position, vec3 p_normal, uint p_light_index, bool
 
 #if defined(MODE_BOUNCE_LIGHT) || defined(MODE_LIGHT_PROBES)
 
+#ifdef MODE_LIGHT_PROBES
+// What the last trace_indirect_light() call's first opaque hit was (RAY_FRONT, RAY_BACK or RAY_MISS):
+// a probe whose rays mostly hit back faces is inside geometry.
+uint probe_first_hit = RAY_MISS;
+#endif
+
 vec3 trace_environment_color(vec3 ray_dir) {
 	vec3 sky_dir = normalize(mat3(bake_params.env_transform) * ray_dir);
 	vec2 st = vec2(atan(sky_dir.x, sky_dir.z) - PI, acos(sky_dir.y));
@@ -727,10 +733,19 @@ vec3 trace_indirect_light(vec3 p_position, vec3 p_ray_dir, inout uint r_noise, f
 	uint transparency_rays_left = bake_params.transparency_rays;
 	vec3 throughput = vec3(1.0);
 	vec3 light = vec3(0.0);
+#ifdef MODE_LIGHT_PROBES
+	bool first_trace = true;
+#endif
 	for (uint depth = 0; depth < max_depth; depth++) {
 		uint tidx;
 		vec3 barycentric;
 		uint trace_result = trace_ray_closest_hit_triangle(position + ray_dir * bake_params.bias, position + ray_dir * length(bake_params.world_size), tidx, barycentric);
+#ifdef MODE_LIGHT_PROBES
+		if (first_trace) {
+			probe_first_hit = trace_result;
+			first_trace = false;
+		}
+#endif
 		if (trace_result == RAY_FRONT) {
 			Vertex vert0 = vertices.data[triangles.data[tidx].indices.x];
 			Vertex vert1 = vertices.data[triangles.data[tidx].indices.y];
@@ -1108,6 +1123,11 @@ void main() {
 	for (uint i = params.ray_from; i < params.ray_to; i++) {
 		vec3 ray_dir = generate_sphere_uniform_direction(noise);
 		vec3 light = trace_indirect_light(position, ray_dir, noise, 0.0);
+		if (probe_first_hit == RAY_BACK) {
+			// Counted in the alpha of the first coefficient, which the scaling below turns into
+			// 4 x the share of rays that hit a back face first.
+			probe_sh_accum[0].a += 1.0;
+		}
 
 		float c[9] = float[](
 				0.282095, //l0

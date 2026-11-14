@@ -430,6 +430,12 @@ public:
 	virtual void lightmap_set_probe_interior(RID p_lightmap, bool p_interior) = 0;
 	virtual void lightmap_set_probe_capture_data(RID p_lightmap, const PackedVector3Array &p_points, const PackedColorArray &p_point_sh, const PackedInt32Array &p_tetrahedra, const PackedInt32Array &p_bsp_tree) = 0;
 	virtual void lightmap_set_baked_exposure_normalization(RID p_lightmap, float p_exposure) = 0;
+	// A regular grid of probes for per-pixel sampling: p_sh holds RSE::LIGHTMAP_PROBE_GRID_VALUES half
+	// floats a probe (9 spherical harmonics coefficients, each red, green, blue), x fastest.
+	// p_visibility splits each cell into RSE::LIGHTMAP_PROBE_GRID_SUBDIV^3 parts, x fastest across the
+	// whole grid, a byte each: bit k set if the part's centre sees the cell's corner probe k (x + 2y + 4z);
+	// empty means all see all. An empty p_sh removes the grid.
+	virtual void lightmap_set_probe_grid(RID p_lightmap, const AABB &p_bounds, const Vector3i &p_size, const PackedByteArray &p_sh, const PackedByteArray &p_visibility) = 0;
 	virtual PackedVector3Array lightmap_get_probe_capture_points(RID p_lightmap) const = 0;
 	virtual PackedColorArray lightmap_get_probe_capture_sh(RID p_lightmap) const = 0;
 	virtual PackedInt32Array lightmap_get_probe_capture_tetrahedra(RID p_lightmap) const = 0;

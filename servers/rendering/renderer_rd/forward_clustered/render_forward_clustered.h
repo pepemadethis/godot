@@ -270,6 +270,9 @@ private:
 
 	struct LightmapCaptureData {
 		float sh[9 * 4];
+		float grid_xform[3 * 4]; // World space to the probe grid's (in probes), by rows.
+		float grid_normal[3 * 4]; // World axes to the grid's, by rows.
+		float grid_info[4]; // The grid's probe counts, and its slot (-1: none).
 	};
 
 	// When changing any of these enums, remember to change the corresponding enums in the shader files as well.
@@ -503,7 +506,7 @@ private:
 	class GeometryInstanceForwardClustered;
 
 	struct GeometryInstanceLightmapSH {
-		Color sh[9];
+		Color sh[RenderGeometryInstance::LIGHTMAP_CAPTURE_COLORS]; // See RenderGeometryInstance::set_lightmap_capture().
 	};
 
 	// Cached data for drawing surfaces

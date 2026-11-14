@@ -46,6 +46,14 @@ namespace RendererRD {
 
 class LightStorage : public RendererLightStorage {
 public:
+	// Lightmaps whose probe grids can be sampled per pixel at once; more are ignored.
+	static constexpr int MAX_LIGHTMAP_PROBE_GRIDS = 8;
+	// 3D textures a probe grid uses (RGBA16F): three for bands 0 and 1, one per color channel (L0,
+	// L1n1, L1_0, L1p1); four for band 2, its 15 values (coefficient by coefficient, red, green, blue)
+	// in order; then the corner visibility (R8, a bit per corner).
+	static constexpr int PROBE_GRID_TEXTURES = 8;
+	static constexpr int PROBE_GRID_VISIBILITY_TEXTURE = 7;
+
 	enum ShadowAtlastQuadrant : uint32_t {
 		QUADRANT_SHIFT = 27,
 		OMNI_LIGHT_FLAG = 1 << 26,
@@ -366,6 +374,12 @@ private:
 		PackedInt32Array bsp_tree;
 		float specular_intensity = 0.0f;
 
+		// The regular probe grid, if baked: its slot in probe_grid_slots and its bounds (first
+		// probe to last) and size.
+		int32_t probe_grid_slot = -1;
+		AABB probe_grid_bounds;
+		Vector3i probe_grid_size;
+
 		struct BSP {
 			static const int32_t EMPTY_LEAF = INT32_MIN;
 			float plane[4];
@@ -378,6 +392,14 @@ private:
 	bool using_lightmap_array;
 	Vector<RID> lightmap_textures;
 	uint64_t lightmap_array_version = 0;
+
+	// Probe grids, per slot: the lightmap using it and its 3D textures (PROBE_GRID_TEXTURES).
+	struct ProbeGridSlot {
+		RID lightmap;
+		RID textures[PROBE_GRID_TEXTURES];
+	};
+	ProbeGridSlot probe_grid_slots[MAX_LIGHTMAP_PROBE_GRIDS];
+	void _lightmap_free_probe_grid(Lightmap *p_lightmap);
 	float lightmap_probe_capture_update_speed = 4;
 
 	mutable RID_Owner<Lightmap, true> lightmap_owner;
@@ -1042,6 +1064,12 @@ public:
 	virtual void lightmap_set_probe_interior(RID p_lightmap, bool p_interior) override;
 	virtual void lightmap_set_probe_capture_data(RID p_lightmap, const PackedVector3Array &p_points, const PackedColorArray &p_point_sh, const PackedInt32Array &p_tetrahedra, const PackedInt32Array &p_bsp_tree) override;
 	virtual void lightmap_set_baked_exposure_normalization(RID p_lightmap, float p_exposure) override;
+	virtual void lightmap_set_probe_grid(RID p_lightmap, const AABB &p_bounds, const Vector3i &p_size, const PackedByteArray &p_sh, const PackedByteArray &p_visibility) override;
+	virtual int32_t lightmap_get_probe_grid(RID p_lightmap, AABB &r_bounds, Vector3i &r_size) const override;
+	// A slot's texture p_texture (see PROBE_GRID_TEXTURES), or an invalid RID if the slot is free.
+	_FORCE_INLINE_ RID lightmap_probe_grid_get_texture(int p_slot, int p_texture) const {
+		return probe_grid_slots[p_slot].textures[p_texture];
+	}
 	virtual PackedVector3Array lightmap_get_probe_capture_points(RID p_lightmap) const override;
 	virtual PackedColorArray lightmap_get_probe_capture_sh(RID p_lightmap) const override;
 	virtual PackedInt32Array lightmap_get_probe_capture_tetrahedra(RID p_lightmap) const override;

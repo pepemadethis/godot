@@ -249,7 +249,10 @@ layout(set = 0, binding = 8, std140) restrict readonly buffer Lightmaps {
 lightmaps;
 
 struct LightmapCapture {
-	vec4 sh[9];
+	vec4 sh[9]; // L2 at the object's centre, in world axes.
+	vec4 grid_xform[3]; // World space to the probe grid's (in probes), by rows.
+	vec4 grid_normal[3]; // World axes to the grid's, by rows.
+	vec4 grid_info; // The grid's probe counts, and its slot (negative: none).
 };
 
 layout(set = 0, binding = 9, std140) restrict readonly buffer LightmapCaptures {
@@ -400,6 +403,12 @@ layout(set = 1, binding = 6) uniform texture2D directional_shadow_atlas;
 layout(set = 1, binding = 7) uniform texture2DArray lightmap_textures[MAX_LIGHTMAP_TEXTURES * 2];
 
 layout(set = 1, binding = 8) uniform texture3D voxel_gi_textures[MAX_VOXEL_GI_INSTANCES];
+
+// Lightmap probe grids, eight per slot: red, green and blue, each texel a channel's L0, L1n1, L1_0
+// and L1p1; band 2's 15 values in four; then the visibility of each cell's corners from its parts,
+// a bit per corner.
+#define LIGHTMAP_PROBE_GRID_TEXTURES 8
+layout(set = 1, binding = 39) uniform texture3D lightmap_probe_grids[MAX_LIGHTMAP_PROBE_GRIDS * LIGHTMAP_PROBE_GRID_TEXTURES];
 
 layout(set = 1, binding = 9, std430) buffer restrict readonly ClusterBuffer {
 	uint data[];

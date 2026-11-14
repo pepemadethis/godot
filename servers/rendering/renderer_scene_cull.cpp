@@ -3568,7 +3568,7 @@ void RendererSceneCull::_scene_cull(CullData &cull_data, InstanceCullResult &cul
 			for (uint32_t j = 0; j < cull_data.cull->shadow_count; j++) {
 				for (uint32_t k = 0; k < cull_data.cull->shadows[j].cascade_count; k++) {
 					const RendererSceneRender::ShadowStaticCacheMode cache_mode = cull_data.cull->shadows[j].cascades[k].static_cache_mode;
-					// A cached cascade keeps every caster in its box, not just those near the view.
+					// A cached cascade keeps every static caster in its box, not just those near the view.
 					if (cache_mode == RendererSceneRender::SHADOW_STATIC_CACHE_NONE && !light_culler->cull_directional_light(cull_data.scenario->instance_aabbs[i], j, k)) { // pass the cascade index
 						continue;
 					}
@@ -3582,6 +3582,10 @@ void RendererSceneCull::_scene_cull(CullData &cull_data, InstanceCullResult &cul
 							} else {
 								const InstanceGeometryData *geom = static_cast<const InstanceGeometryData *>(idata.instance->base_data);
 								if (!geom->shadow_static || _instance_is_shadow_dynamic_by_nature(idata.instance)) {
+									// Moving casters are drawn again every frame, so only those that can shadow this view are needed.
+									if (!light_culler->cull_directional_light(cull_data.scenario->instance_aabbs[i], j, k)) {
+										continue;
+									}
 									cull_result.directional_shadows[j].cascade_dynamic_instances[k].push_back(idata.instance_geometry);
 								} else if (cache_mode == RendererSceneRender::SHADOW_STATIC_CACHE_REBUILD) {
 									cull_result.directional_shadows[j].cascade_geometry_instances[k].push_back(idata.instance_geometry);

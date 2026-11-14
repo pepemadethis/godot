@@ -645,6 +645,11 @@ public:
 	static constexpr uint64_t SHADOW_STATIC_REST_FRAMES = 30;
 	bool directional_static_cache = false; // rendering/lights_and_shadows/directional_shadow/static_cache
 	real_t directional_static_cache_margin = 0.2;
+	// Directional cascades whose cache is rebuilt in one frame, over all lights and cameras. A far
+	// cascade's rebuild draws most of its box's casters, so several in one frame add up to a spike.
+	static constexpr uint32_t DIRECTIONAL_CACHE_REBUILDS_PER_FRAME = 1;
+	uint64_t directional_cache_rebuild_frame = UINT64_MAX;
+	uint32_t directional_cache_rebuilds = 0; // Rebuilds granted in directional_cache_rebuild_frame.
 	static void _shadow_static_change(Instance *p_instance, const AABB &p_aabb);
 	mutable SelfList<Instance>::List shadow_dynamic_list;
 	uint64_t shadow_dynamic_list_frame = UINT64_MAX;
@@ -746,6 +751,7 @@ public:
 		// Directional shadow static cache. Each cascade keeps a fixed ("sticky") light-space box,
 		// larger than the camera slice by a margin, until the slice leaves it; while it holds,
 		// the static casters' depth is reused from the cache and only moving casters are drawn.
+		// Rebuilds are spread over frames (see DIRECTIONAL_CACHE_REBUILDS_PER_FRAME).
 		struct DirectionalCascadeCache {
 			bool valid = false;
 			real_t x = 0, y = 0, z = 0; // Box centre in light space.
@@ -755,6 +761,9 @@ public:
 			uint64_t cached_version = 0; // The version the cache holds.
 			uint64_t generation = 0; // LightStorage::directional_shadow_get_static_generation().
 			uint64_t changes_seen = 0; // Scenario::shadow_static_change_count already checked.
+			// The camera slice's centre in light space last frame, to tell how fast it nears the box's edge.
+			bool slice_seen = false;
+			real_t slice_x = 0, slice_y = 0, slice_z = 0;
 		} directional_cache[RendererSceneRender::MAX_DIRECTIONAL_LIGHT_CASCADES];
 		Basis directional_cache_basis;
 		int directional_cache_splits = 0;

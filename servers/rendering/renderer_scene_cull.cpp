@@ -2261,8 +2261,31 @@ void RendererSceneCull::_light_instance_setup_directional_shadow(int p_shadow_in
 		}
 	}
 
+	// obtain the light frustum ranges (given endpoints)
+
+	const Transform3D transform = light_transform; //discard scale and stabilize light
+
+	const Vector3 x_vec = transform.basis.get_column(Vector3::AXIS_X).normalized();
+	const Vector3 y_vec = transform.basis.get_column(Vector3::AXIS_Y).normalized();
+	const Vector3 z_vec = transform.basis.get_column(Vector3::AXIS_Z).normalized();
+	//z_vec points against the camera, like in default opengl
+
+	// Each cascade's light-space ranges: first fitted to its camera slice, then (with the static
+	// cache) replaced by the cascade's sticky box.
+	struct CascadeFit {
+		bool ok = false;
+		real_t x_min = 0, x_max = 0, y_min = 0, y_max = 0, z_min = 0, z_max = 0; // Used for culling.
+		real_t x_min_cam = 0, x_max_cam = 0, y_min_cam = 0, y_max_cam = 0, z_min_cam = 0; // The shadow map's box.
+		Vector3 center; // Of the camera slice.
+		real_t cx = 0, cy = 0, cz = 0; // The slice's centre in light space.
+		real_t radius = 0;
+		real_t soft_shadow_expand = 0;
+	} fits[RendererSceneRender::MAX_DIRECTIONAL_LIGHT_CASCADES];
+
 	for (int i = 0; i < splits; i++) {
 		RENDER_TIMESTAMP("Cull DirectionalLight3D, Split " + itos(i));
+
+		cull.shadows[p_shadow_index].cascades[i].static_cache_mode = RendererSceneRender::SHADOW_STATIC_CACHE_NONE;
 
 		// setup a camera matrix for that range!
 		Projection camera_matrix;
@@ -2286,15 +2309,6 @@ void RendererSceneCull::_light_instance_setup_directional_shadow(int p_shadow_in
 		ERR_CONTINUE(!res);
 
 		light_culler->prepare_directional_light_cascade(p_shadow_index, i, receiver_frustum_planes, endpoints);
-
-		// obtain the light frustum ranges (given endpoints)
-
-		Transform3D transform = light_transform; //discard scale and stabilize light
-
-		Vector3 x_vec = transform.basis.get_column(Vector3::AXIS_X).normalized();
-		Vector3 y_vec = transform.basis.get_column(Vector3::AXIS_Y).normalized();
-		Vector3 z_vec = transform.basis.get_column(Vector3::AXIS_Z).normalized();
-		//z_vec points against the camera, like in default opengl
 
 		real_t x_min = 0.f, x_max = 0.f;
 		real_t y_min = 0.f, y_max = 0.f;
@@ -2388,36 +2402,73 @@ void RendererSceneCull::_light_instance_setup_directional_shadow(int p_shadow_in
 			y_min_cam = Math::snapped(y_vec.dot(center) - radius - soft_shadow_expand, unit);
 		}
 
-		real_t texel_half_size = radius; // Half the size the shadow map's texels are spread over.
-		cull.shadows[p_shadow_index].cascades[i].static_cache_mode = RendererSceneRender::SHADOW_STATIC_CACHE_NONE;
-		if (use_static_cache) {
-			InstanceLightData::DirectionalCascadeCache &cc = light->directional_cache[i];
-			const real_t r = radius + soft_shadow_expand;
-			const real_t cx = x_vec.dot(center);
-			const real_t cy = y_vec.dot(center);
-			const real_t cz = z_vec.dot(center);
-			const bool fits = cc.valid && Math::abs(r - cc.radius) <= r * 0.001 && Math::abs(cx - cc.x) + r <= cc.half && Math::abs(cy - cc.y) + r <= cc.half && Math::abs(cz - cc.z) + r <= cc.half;
-			if (!fits) {
-				// Re-centre on the camera slice, snapped to the box's own texels so shadows stay stable.
-				cc.radius = r;
-				cc.half = r * (1.0 + directional_static_cache_margin);
-				const real_t texel = cc.half * 2.0 / texture_size;
-				cc.x = Math::snapped(cx, texel);
-				cc.y = Math::snapped(cy, texel);
-				cc.z = cz;
-				cc.valid = true;
-				cc.version++;
+		CascadeFit &fit = fits[i];
+		fit.ok = true;
+		fit.x_min = x_min;
+		fit.x_max = x_max;
+		fit.y_min = y_min;
+		fit.y_max = y_max;
+		fit.z_min = z_min;
+		fit.z_max = z_max;
+		fit.x_min_cam = x_min_cam;
+		fit.x_max_cam = x_max_cam;
+		fit.y_min_cam = y_min_cam;
+		fit.y_max_cam = y_max_cam;
+		fit.z_min_cam = z_min_cam;
+		fit.center = center;
+		fit.cx = x_vec.dot(center);
+		fit.cy = y_vec.dot(center);
+		fit.cz = z_vec.dot(center);
+		fit.radius = radius;
+		fit.soft_shadow_expand = soft_shadow_expand;
+	}
+
+	if (use_static_cache) {
+		// Each cascade either keeps its sticky box, is due for a rebuild (its camera slice will leave the
+		// box within about two frames at the slice's current speed) or needs one now (the slice has left
+		// the box, or static casters in it changed). Rebuilds are spread over frames: at most
+		// DIRECTIONAL_CACHE_REBUILDS_PER_FRAME, needed ones before due ones and far cascades first, whose
+		// rebuilds cost the most. A due cascade that waits keeps its old box, which still covers its
+		// slice; one that needs a rebuild but waits is drawn without the cache for that frame.
+		enum CascadeNeed {
+			CASCADE_NEED_NOTHING,
+			CASCADE_NEED_SOON,
+			CASCADE_NEED_NOW,
+		};
+		CascadeNeed needs[RendererSceneRender::MAX_DIRECTIONAL_LIGHT_CASCADES] = {};
+		const uint64_t generation = RSG::light_storage->directional_shadow_get_static_generation();
+		Scenario *scenario = p_instance->scenario;
+
+		for (int i = 0; i < splits; i++) {
+			const CascadeFit &fit = fits[i];
+			if (!fit.ok) {
+				continue;
 			}
-			const uint64_t generation = RSG::light_storage->directional_shadow_get_static_generation();
+			InstanceLightData::DirectionalCascadeCache &cc = light->directional_cache[i];
+			const real_t r = fit.radius + fit.soft_shadow_expand;
+
+			// How far the slice moved since last frame (largest axis), and the room it has left in the box
+			// (negative once it is out).
+			const real_t step = cc.slice_seen ? MAX(MAX(Math::abs(fit.cx - cc.slice_x), Math::abs(fit.cy - cc.slice_y)), Math::abs(fit.cz - cc.slice_z)) : 0.0;
+			cc.slice_seen = true;
+			cc.slice_x = fit.cx;
+			cc.slice_y = fit.cy;
+			cc.slice_z = fit.cz;
+			real_t room = -1.0;
+			if (cc.valid && Math::abs(r - cc.radius) <= r * 0.001) {
+				room = cc.half - r - MAX(MAX(Math::abs(fit.cx - cc.x), Math::abs(fit.cy - cc.y)), Math::abs(fit.cz - cc.z));
+			}
+
 			if (cc.generation != generation) {
 				cc.generation = generation;
 				cc.version++;
 			}
 			// Static casters that appeared, left, moved or settled inside the box (from the box's
 			// far side up towards the light) make the cached content stale.
-			Scenario *scenario = p_instance->scenario;
 			if (scenario && cc.changes_seen != scenario->shadow_static_change_count) {
-				if (scenario->shadow_static_change_count - cc.changes_seen > Scenario::SHADOW_STATIC_CHANGE_RING) {
+				if (!cc.valid) {
+					// Nothing cached to go stale; a rebuild re-centres the box anyway.
+				} else if (scenario->shadow_static_change_count - cc.changes_seen > Scenario::SHADOW_STATIC_CHANGE_RING) {
 					cc.version++;
 				} else {
 					for (uint64_t k = cc.changes_seen; k < scenario->shadow_static_change_count; k++) {
@@ -2441,22 +2492,71 @@ void RendererSceneCull::_light_instance_setup_directional_shadow(int p_shadow_in
 				cc.changes_seen = scenario->shadow_static_change_count;
 			}
 
-			cull.shadows[p_shadow_index].cascades[i].static_cache_mode = cc.cached_version == cc.version ? RendererSceneRender::SHADOW_STATIC_CACHE_REUSE : RendererSceneRender::SHADOW_STATIC_CACHE_REBUILD;
-			cc.cached_version = cc.version;
-
-			x_min_cam = cc.x - cc.half;
-			x_max_cam = cc.x + cc.half;
-			y_min_cam = cc.y - cc.half;
-			y_max_cam = cc.y + cc.half;
-			z_min_cam = cc.z - cc.half;
-			// Cull casters against the whole box: the cache outlives the current view.
-			x_min = x_min_cam;
-			x_max = x_max_cam;
-			y_min = y_min_cam;
-			y_max = y_max_cam;
-			z_min = z_min_cam;
-			texel_half_size = cc.half;
+			if (room < 0.0 || cc.cached_version != cc.version) {
+				needs[i] = CASCADE_NEED_NOW;
+			} else if (room < 2.0 * step) {
+				needs[i] = CASCADE_NEED_SOON;
+			}
 		}
+
+		const uint64_t frame = Engine::get_singleton()->get_frames_drawn();
+		if (directional_cache_rebuild_frame != frame) {
+			directional_cache_rebuild_frame = frame;
+			directional_cache_rebuilds = 0;
+		}
+		bool rebuild[RendererSceneRender::MAX_DIRECTIONAL_LIGHT_CASCADES] = {};
+		const CascadeNeed order[2] = { CASCADE_NEED_NOW, CASCADE_NEED_SOON };
+		for (const CascadeNeed need : order) {
+			for (int i = splits - 1; i >= 0 && directional_cache_rebuilds < DIRECTIONAL_CACHE_REBUILDS_PER_FRAME; i--) {
+				if (needs[i] == need) {
+					rebuild[i] = true;
+					directional_cache_rebuilds++;
+				}
+			}
+		}
+
+		for (int i = 0; i < splits; i++) {
+			CascadeFit &fit = fits[i];
+			if (!fit.ok || (needs[i] == CASCADE_NEED_NOW && !rebuild[i])) {
+				continue; // Drawn without the cache this frame.
+			}
+			InstanceLightData::DirectionalCascadeCache &cc = light->directional_cache[i];
+			if (rebuild[i]) {
+				// Re-centre on the camera slice, snapped to the box's own texels so shadows stay stable.
+				const real_t r = fit.radius + fit.soft_shadow_expand;
+				cc.radius = r;
+				cc.half = r * (1.0 + directional_static_cache_margin);
+				const real_t texel = cc.half * 2.0 / texture_size;
+				cc.x = Math::snapped(fit.cx, texel);
+				cc.y = Math::snapped(fit.cy, texel);
+				cc.z = fit.cz;
+				cc.valid = true;
+				cc.version++;
+				cc.cached_version = cc.version;
+			}
+			cull.shadows[p_shadow_index].cascades[i].static_cache_mode = rebuild[i] ? RendererSceneRender::SHADOW_STATIC_CACHE_REBUILD : RendererSceneRender::SHADOW_STATIC_CACHE_REUSE;
+
+			fit.x_min_cam = cc.x - cc.half;
+			fit.x_max_cam = cc.x + cc.half;
+			fit.y_min_cam = cc.y - cc.half;
+			fit.y_max_cam = cc.y + cc.half;
+			fit.z_min_cam = cc.z - cc.half;
+			// Cull casters against the whole box: the cache outlives the current view.
+			fit.x_min = fit.x_min_cam;
+			fit.x_max = fit.x_max_cam;
+			fit.y_min = fit.y_min_cam;
+			fit.y_max = fit.y_max_cam;
+			fit.z_min = fit.z_min_cam;
+		}
+	}
+
+	for (int i = 0; i < splits; i++) {
+		const CascadeFit &fit = fits[i];
+		if (!fit.ok) {
+			continue;
+		}
+		const bool cached = cull.shadows[p_shadow_index].cascades[i].static_cache_mode != RendererSceneRender::SHADOW_STATIC_CACHE_NONE;
+		const InstanceLightData::DirectionalCascadeCache &cc = light->directional_cache[i];
 
 		//now that we know all ranges, we can proceed to make the light frustum planes, for culling octree
 
@@ -2464,44 +2564,41 @@ void RendererSceneCull::_light_instance_setup_directional_shadow(int p_shadow_in
 		light_frustum_planes.resize(6);
 
 		//right/left
-		light_frustum_planes.write[0] = Plane(x_vec, x_max);
-		light_frustum_planes.write[1] = Plane(-x_vec, -x_min);
+		light_frustum_planes.write[0] = Plane(x_vec, fit.x_max);
+		light_frustum_planes.write[1] = Plane(-x_vec, -fit.x_min);
 		//top/bottom
-		light_frustum_planes.write[2] = Plane(y_vec, y_max);
-		light_frustum_planes.write[3] = Plane(-y_vec, -y_min);
+		light_frustum_planes.write[2] = Plane(y_vec, fit.y_max);
+		light_frustum_planes.write[3] = Plane(-y_vec, -fit.y_min);
 		//near/far
-		light_frustum_planes.write[4] = Plane(z_vec, z_max + 1e6);
-		light_frustum_planes.write[5] = Plane(-z_vec, -z_min); // z_min is ok, since casters further than far-light plane are not needed
+		light_frustum_planes.write[4] = Plane(z_vec, fit.z_max + 1e6);
+		light_frustum_planes.write[5] = Plane(-z_vec, -fit.z_min); // z_min is ok, since casters further than far-light plane are not needed
 
 		// a pre pass will need to be needed to determine the actual z-near to be used
 
-		if (cull.shadows[p_shadow_index].cascades[i].static_cache_mode != RendererSceneRender::SHADOW_STATIC_CACHE_NONE) {
-			const InstanceLightData::DirectionalCascadeCache &cc = light->directional_cache[i];
-			z_max = cc.z + cc.half + pancake_size;
-		} else {
-			z_max = z_vec.dot(center) + radius + pancake_size;
-		}
+		const real_t z_max = cached ? cc.z + cc.half + pancake_size : z_vec.dot(fit.center) + fit.radius + pancake_size;
+		// Half the size the shadow map's texels are spread over.
+		const real_t texel_half_size = cached ? cc.half : fit.radius;
 
 		{
 			Projection ortho_camera;
-			real_t half_x = (x_max_cam - x_min_cam) * 0.5;
-			real_t half_y = (y_max_cam - y_min_cam) * 0.5;
+			real_t half_x = (fit.x_max_cam - fit.x_min_cam) * 0.5;
+			real_t half_y = (fit.y_max_cam - fit.y_min_cam) * 0.5;
 
-			ortho_camera.set_orthogonal(-half_x, half_x, -half_y, half_y, 0, (z_max - z_min_cam));
+			ortho_camera.set_orthogonal(-half_x, half_x, -half_y, half_y, 0, (z_max - fit.z_min_cam));
 
-			Vector2 uv_scale(1.0 / (x_max_cam - x_min_cam), 1.0 / (y_max_cam - y_min_cam));
+			Vector2 uv_scale(1.0 / (fit.x_max_cam - fit.x_min_cam), 1.0 / (fit.y_max_cam - fit.y_min_cam));
 
 			Transform3D ortho_transform;
 			ortho_transform.basis = transform.basis;
-			ortho_transform.origin = x_vec * (x_min_cam + half_x) + y_vec * (y_min_cam + half_y) + z_vec * z_max;
+			ortho_transform.origin = x_vec * (fit.x_min_cam + half_x) + y_vec * (fit.y_min_cam + half_y) + z_vec * z_max;
 
 			cull.shadows[p_shadow_index].cascades[i].frustum = Frustum(light_frustum_planes);
 			cull.shadows[p_shadow_index].cascades[i].projection = ortho_camera;
 			cull.shadows[p_shadow_index].cascades[i].transform = ortho_transform;
-			cull.shadows[p_shadow_index].cascades[i].zfar = z_max - z_min_cam;
+			cull.shadows[p_shadow_index].cascades[i].zfar = z_max - fit.z_min_cam;
 			cull.shadows[p_shadow_index].cascades[i].split = distances[i + 1];
 			cull.shadows[p_shadow_index].cascades[i].shadow_texel_size = texel_half_size * 2.0 / texture_size;
-			cull.shadows[p_shadow_index].cascades[i].bias_scale = (z_max - z_min_cam);
+			cull.shadows[p_shadow_index].cascades[i].bias_scale = (z_max - fit.z_min_cam);
 			cull.shadows[p_shadow_index].cascades[i].range_begin = z_max - z_vec.dot(p_cam_transform.origin);
 			cull.shadows[p_shadow_index].cascades[i].uv_scale = uv_scale;
 		}

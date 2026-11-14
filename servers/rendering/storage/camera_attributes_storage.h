@@ -76,6 +76,7 @@ private:
 	RSE::DOFBlurQuality dof_blur_quality = RSE::DOF_BLUR_QUALITY_MEDIUM;
 	RSE::DOFBokehShape dof_blur_bokeh_shape = RSE::DOF_BOKEH_HEXAGON;
 	bool dof_blur_use_jitter = false;
+	bool dof_blur_near_far_layers = false;
 	static uint64_t auto_exposure_counter;
 
 	mutable RID_Owner<CameraAttributes, true> camera_attributes_owner;
@@ -176,5 +177,11 @@ public:
 
 	_FORCE_INLINE_ bool camera_attributes_get_dof_blur_use_jitter() {
 		return dof_blur_use_jitter;
+	}
+
+	void camera_attributes_set_dof_blur_near_far_layers(bool p_enable);
+
+	_FORCE_INLINE_ bool camera_attributes_get_dof_blur_near_far_layers() {
+		return dof_blur_near_far_layers;
 	}
 };

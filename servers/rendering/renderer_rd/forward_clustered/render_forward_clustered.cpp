@@ -2636,6 +2636,19 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 		_process_compositor_effects(RSE::COMPOSITOR_EFFECT_CALLBACK_TYPE_POST_TRANSPARENT, p_render_data);
 	}
 
+	if (rb_data.is_valid() && _dof_before_temporal(p_render_data)) {
+		// Depth of field in near and far layers, before TAA so that TAA cleans up its sampling noise.
+		RENDER_TIMESTAMP("Depth of Field");
+		RD::get_singleton()->draw_command_begin_label("Depth of Field (near and far layers)");
+		for (uint32_t v = 0; v < rb->get_view_count(); v++) {
+			// In stereo, z_near and z_far can be offset for the combined frustum.
+			float z_near = p_render_data->scene_data->view_projection[v].get_z_near();
+			float z_far = p_render_data->scene_data->view_projection[v].get_z_far();
+			bokeh_dof->bokeh_dof_layered(rb, v, p_render_data->camera_attributes, z_near, z_far, p_render_data->scene_data->cam_orthogonal);
+		}
+		RD::get_singleton()->draw_command_end_label();
+	}
+
 	if (rb_data.is_valid() && (using_upscaling || using_taa)) {
 		if (scale_type == SCALE_FSR2) {
 			rb_data->ensure_fsr2(fsr2_effect);

@@ -31,6 +31,7 @@
 #include "bokeh_dof.h"
 
 #include "servers/rendering/renderer_rd/effects/copy_effects.h"
+#include "servers/rendering/renderer_rd/renderer_compositor_rd.h"
 #include "servers/rendering/renderer_rd/storage_rd/material_storage.h"
 #include "servers/rendering/renderer_rd/uniform_set_cache_rd.h"
 #include "servers/rendering/rendering_server_globals.h"
@@ -75,6 +76,19 @@ BokehDOF::BokehDOF(bool p_prefer_raster_effects) {
 		for (int i = 0; i < BOKEH_MAX; i++) {
 			bokeh.raster_pipelines[i].clear();
 		}
+
+		Vector<String> layered_modes;
+		layered_modes.push_back("\n#define MODE_PREPARE\n");
+		layered_modes.push_back("\n#define MODE_NEAR_TILES\n");
+		layered_modes.push_back("\n#define MODE_NEAR_DILATE\n");
+		layered_modes.push_back("\n#define MODE_GATHER\n");
+		layered_modes.push_back("\n#define MODE_FILL\n");
+		layered_modes.push_back("\n#define MODE_COMPOSITE\n");
+		layered.shader.initialize(layered_modes);
+		layered.shader_version = layered.shader.version_create();
+		for (int i = 0; i < LAYERED_MAX; i++) {
+			layered.pipelines[i] = RD::get_singleton()->compute_pipeline_create(layered.shader.version_get_shader(layered.shader_version, i));
+		}
 	}
 }
 
@@ -87,7 +101,166 @@ BokehDOF::~BokehDOF() {
 		bokeh.raster_shader.version_free(bokeh.shader_version);
 	} else {
 		bokeh.compute_shader.version_free(bokeh.shader_version);
+		layered.shader.version_free(layered.shader_version);
 	}
+}
+
+void BokehDOF::bokeh_dof_layered(Ref<RenderSceneBuffersRD> p_render_buffers, uint32_t p_view, RID p_camera_attributes, float p_cam_znear, float p_cam_zfar, bool p_cam_orthogonal) {
+	ERR_FAIL_COND_MSG(prefer_raster_effects, "Layered depth of field needs compute (Forward+).");
+
+	UniformSetCacheRD *uniform_set_cache = UniformSetCacheRD::get_singleton();
+	ERR_FAIL_NULL(uniform_set_cache);
+	MaterialStorage *material_storage = MaterialStorage::get_singleton();
+	ERR_FAIL_NULL(material_storage);
+
+	bool dof_far = RSG::camera_attributes->camera_attributes_get_dof_far_enabled(p_camera_attributes);
+	float dof_far_begin = RSG::camera_attributes->camera_attributes_get_dof_far_distance(p_camera_attributes);
+	float dof_far_size = RSG::camera_attributes->camera_attributes_get_dof_far_transition(p_camera_attributes);
+	bool dof_near = RSG::camera_attributes->camera_attributes_get_dof_near_enabled(p_camera_attributes);
+	float dof_near_begin = RSG::camera_attributes->camera_attributes_get_dof_near_distance(p_camera_attributes);
+	float dof_near_size = RSG::camera_attributes->camera_attributes_get_dof_near_transition(p_camera_attributes);
+	float bokeh_size = RSG::camera_attributes->camera_attributes_get_dof_blur_amount(p_camera_attributes) * 64; // Base 64 pixel radius, as the other path.
+	bool use_jitter = RSG::camera_attributes->camera_attributes_get_dof_blur_use_jitter();
+	RSE::DOFBlurQuality blur_quality = RSG::camera_attributes->camera_attributes_get_dof_blur_quality();
+
+	const Size2i full_size = p_render_buffers->get_internal_size();
+	const Size2i half_size = Size2i((full_size.width + 1) / 2, (full_size.height + 1) / 2);
+	// Physically based blur is capped as in the other path, to keep the cost bounded.
+	const float blur_size = (dof_near_size < 0.0 && dof_far_size < 0.0) ? 32.0f : bokeh_size;
+	// Tiles as wide as the largest near blur (in half-resolution pixels), so a
+	// near blur reaches at most into the neighbouring tiles.
+	const int tile_size = MAX(8, int(Math::ceil(blur_size * 0.5f)));
+	const Size2i tile_count = Size2i((half_size.width + tile_size - 1) / tile_size, (half_size.height + tile_size - 1) / tile_size);
+	const uint32_t view_count = p_render_buffers->get_view_count();
+
+	const StringName context = SNAME("dof_layered");
+	const StringName prepared_name = SNAME("prepared");
+	const StringName far_name = SNAME("far");
+	const StringName near_name = SNAME("near");
+	const StringName far_filled_name = SNAME("far_filled");
+	const StringName near_filled_name = SNAME("near_filled");
+	const StringName near_tiles_name = SNAME("near_tiles");
+	const StringName near_dilated_name = SNAME("near_dilated");
+
+	if (p_render_buffers->has_texture(context, near_tiles_name)) {
+		RD::TextureFormat tiles_format = p_render_buffers->get_texture_format(context, near_tiles_name);
+		RD::TextureFormat prepared_format = p_render_buffers->get_texture_format(context, prepared_name);
+		if (int(tiles_format.width) != tile_count.width || int(tiles_format.height) != tile_count.height || int(prepared_format.width) != half_size.width || int(prepared_format.height) != half_size.height) {
+			p_render_buffers->clear_context(context);
+		}
+	}
+	if (!p_render_buffers->has_texture(context, near_tiles_name)) {
+		const uint32_t usage_bits = RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT;
+		for (const StringName &name : { prepared_name, far_name, near_name, far_filled_name, near_filled_name }) {
+			p_render_buffers->create_texture(context, name, RD::DATA_FORMAT_R16G16B16A16_SFLOAT, usage_bits, RD::TEXTURE_SAMPLES_1, half_size, view_count);
+		}
+		for (const StringName &name : { near_tiles_name, near_dilated_name }) {
+			p_render_buffers->create_texture(context, name, RD::DATA_FORMAT_R16_SFLOAT, usage_bits, RD::TEXTURE_SAMPLES_1, tile_count, view_count);
+		}
+	}
+
+	static const int quality_samples[4] = { 16, 32, 48, 64 };
+
+	LayeredPushConstant push_constant;
+	memset(&push_constant, 0, sizeof(LayeredPushConstant));
+	push_constant.full_size[0] = full_size.width;
+	push_constant.full_size[1] = full_size.height;
+	push_constant.half_size[0] = half_size.width;
+	push_constant.half_size[1] = half_size.height;
+	push_constant.z_near = p_cam_znear;
+	push_constant.z_far = p_cam_zfar;
+	push_constant.flags = (p_cam_orthogonal ? LAYERED_FLAG_ORTHOGONAL : 0) | (dof_near ? LAYERED_FLAG_NEAR : 0) | (dof_far ? LAYERED_FLAG_FAR : 0) | (dof_near_size < 0.0 ? LAYERED_FLAG_PHYSICAL_NEAR : 0) | (dof_far_size < 0.0 ? LAYERED_FLAG_PHYSICAL_FAR : 0) | (use_jitter ? LAYERED_FLAG_JITTER : 0);
+	push_constant.sample_count = quality_samples[blur_quality];
+	push_constant.near_begin = dof_near_begin;
+	push_constant.near_end = dof_near_begin - dof_near_size; // Only used with non-physically-based.
+	push_constant.far_begin = dof_far_begin;
+	push_constant.far_end = dof_far_begin + dof_far_size; // Only used with non-physically-based.
+	push_constant.blur_size = blur_size;
+	push_constant.blur_size_near = bokeh_size;
+	push_constant.blur_size_far = bokeh_size;
+	push_constant.tile_size = tile_size;
+	push_constant.tile_count[0] = tile_count.width;
+	push_constant.tile_count[1] = tile_count.height;
+	push_constant.frame = uint32_t(RendererCompositorRD::get_singleton()->get_frame_number());
+
+	RID nearest = material_storage->sampler_rd_get_default(RSE::CANVAS_ITEM_TEXTURE_FILTER_NEAREST, RSE::CANVAS_ITEM_TEXTURE_REPEAT_DISABLED);
+	RID linear = material_storage->sampler_rd_get_default(RSE::CANVAS_ITEM_TEXTURE_FILTER_LINEAR, RSE::CANVAS_ITEM_TEXTURE_REPEAT_DISABLED);
+
+	RID color = p_render_buffers->get_internal_texture(p_view);
+	RID depth = p_render_buffers->get_depth_texture(p_view);
+	RID prepared = p_render_buffers->get_texture_slice(context, prepared_name, p_view, 0);
+	RID far_layer = p_render_buffers->get_texture_slice(context, far_name, p_view, 0);
+	RID near_layer = p_render_buffers->get_texture_slice(context, near_name, p_view, 0);
+	RID far_filled = p_render_buffers->get_texture_slice(context, far_filled_name, p_view, 0);
+	RID near_filled = p_render_buffers->get_texture_slice(context, near_filled_name, p_view, 0);
+	RID near_tiles = p_render_buffers->get_texture_slice(context, near_tiles_name, p_view, 0);
+	RID near_dilated = p_render_buffers->get_texture_slice(context, near_dilated_name, p_view, 0);
+
+	RD::ComputeListID compute_list = RD::get_singleton()->compute_list_begin();
+
+	auto bind = [&](LayeredMode p_mode) -> RID {
+		RD::get_singleton()->compute_list_bind_compute_pipeline(compute_list, layered.pipelines[p_mode]);
+		RD::get_singleton()->compute_list_set_push_constant(compute_list, &push_constant, sizeof(LayeredPushConstant));
+		return layered.shader.version_get_shader(layered.shader_version, p_mode);
+	};
+
+	{
+		RID shader = bind(LAYERED_PREPARE);
+		RD::Uniform u_color(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 0, Vector<RID>({ nearest, color }));
+		RD::Uniform u_depth(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 1, Vector<RID>({ nearest, depth }));
+		RD::Uniform u_prepared(RD::UNIFORM_TYPE_IMAGE, 2, prepared);
+		RD::get_singleton()->compute_list_bind_uniform_set(compute_list, uniform_set_cache->get_cache(shader, 0, u_color, u_depth, u_prepared), 0);
+		RD::get_singleton()->compute_list_dispatch_threads(compute_list, half_size.width, half_size.height, 1);
+		RD::get_singleton()->compute_list_add_barrier(compute_list);
+	}
+	{
+		RID shader = bind(LAYERED_NEAR_TILES);
+		RD::Uniform u_prepared(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 0, Vector<RID>({ nearest, prepared }));
+		RD::Uniform u_tiles(RD::UNIFORM_TYPE_IMAGE, 1, near_tiles);
+		RD::get_singleton()->compute_list_bind_uniform_set(compute_list, uniform_set_cache->get_cache(shader, 0, u_prepared, u_tiles), 0);
+		// One work group per tile.
+		RD::get_singleton()->compute_list_dispatch(compute_list, tile_count.width, tile_count.height, 1);
+		RD::get_singleton()->compute_list_add_barrier(compute_list);
+	}
+	{
+		RID shader = bind(LAYERED_NEAR_DILATE);
+		RD::Uniform u_tiles(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 0, Vector<RID>({ nearest, near_tiles }));
+		RD::Uniform u_dilated(RD::UNIFORM_TYPE_IMAGE, 1, near_dilated);
+		RD::get_singleton()->compute_list_bind_uniform_set(compute_list, uniform_set_cache->get_cache(shader, 0, u_tiles, u_dilated), 0);
+		RD::get_singleton()->compute_list_dispatch_threads(compute_list, tile_count.width, tile_count.height, 1);
+		RD::get_singleton()->compute_list_add_barrier(compute_list);
+	}
+	{
+		RID shader = bind(LAYERED_GATHER);
+		RD::Uniform u_prepared(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 0, Vector<RID>({ nearest, prepared }));
+		RD::Uniform u_dilated(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 1, Vector<RID>({ nearest, near_dilated }));
+		RD::Uniform u_far(RD::UNIFORM_TYPE_IMAGE, 2, far_layer);
+		RD::Uniform u_near(RD::UNIFORM_TYPE_IMAGE, 3, near_layer);
+		RD::get_singleton()->compute_list_bind_uniform_set(compute_list, uniform_set_cache->get_cache(shader, 0, u_prepared, u_dilated, u_far, u_near), 0);
+		RD::get_singleton()->compute_list_dispatch_threads(compute_list, half_size.width, half_size.height, 1);
+		RD::get_singleton()->compute_list_add_barrier(compute_list);
+	}
+	{
+		RID shader = bind(LAYERED_FILL);
+		RD::Uniform u_far(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 0, Vector<RID>({ nearest, far_layer }));
+		RD::Uniform u_near(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 1, Vector<RID>({ nearest, near_layer }));
+		RD::Uniform u_far_filled(RD::UNIFORM_TYPE_IMAGE, 2, far_filled);
+		RD::Uniform u_near_filled(RD::UNIFORM_TYPE_IMAGE, 3, near_filled);
+		RD::get_singleton()->compute_list_bind_uniform_set(compute_list, uniform_set_cache->get_cache(shader, 0, u_far, u_near, u_far_filled, u_near_filled), 0);
+		RD::get_singleton()->compute_list_dispatch_threads(compute_list, half_size.width, half_size.height, 1);
+		RD::get_singleton()->compute_list_add_barrier(compute_list);
+	}
+	{
+		RID shader = bind(LAYERED_COMPOSITE);
+		RD::Uniform u_color(RD::UNIFORM_TYPE_IMAGE, 0, color);
+		RD::Uniform u_depth(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 1, Vector<RID>({ nearest, depth }));
+		RD::Uniform u_far(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 2, Vector<RID>({ linear, far_filled }));
+		RD::Uniform u_near(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 3, Vector<RID>({ linear, near_filled }));
+		RD::get_singleton()->compute_list_bind_uniform_set(compute_list, uniform_set_cache->get_cache(shader, 0, u_color, u_depth, u_far, u_near), 0);
+		RD::get_singleton()->compute_list_dispatch_threads(compute_list, full_size.width, full_size.height, 1);
+	}
+
+	RD::get_singleton()->compute_list_end();
 }
 
 void BokehDOF::bokeh_dof_compute(const BokehBuffers &p_buffers, RID p_camera_attributes, float p_cam_znear, float p_cam_zfar, bool p_cam_orthogonal) {

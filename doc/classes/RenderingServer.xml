@@ -93,6 +93,13 @@
 				Sets the shape of the DOF bokeh pattern to [param shape]. Different shapes may be used to achieve artistic effect, or to meet performance targets.
 			</description>
 		</method>
+		<method name="camera_attributes_set_dof_blur_near_far_layers">
+			<return type="void" />
+			<param index="0" name="enable" type="bool" />
+			<description>
+				Sets whether depth of field is gathered in separate near and far layers before temporal antialiasing. See [member ProjectSettings.rendering/camera/depth_of_field/depth_of_field_near_far_layers].
+			</description>
+		</method>
 		<method name="camera_attributes_set_dof_blur_quality">
 			<return type="void" />
 			<param index="0" name="quality" type="int" enum="RenderingServer.DOFBlurQuality" />

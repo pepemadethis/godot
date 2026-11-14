@@ -62,6 +62,10 @@ void RendererCameraAttributes::camera_attributes_set_dof_blur_quality(RSE::DOFBl
 	dof_blur_use_jitter = p_use_jitter;
 }
 
+void RendererCameraAttributes::camera_attributes_set_dof_blur_near_far_layers(bool p_enable) {
+	dof_blur_near_far_layers = p_enable;
+}
+
 void RendererCameraAttributes::camera_attributes_set_dof_blur_bokeh_shape(RSE::DOFBokehShape p_shape) {
 	dof_blur_bokeh_shape = p_shape;
 }

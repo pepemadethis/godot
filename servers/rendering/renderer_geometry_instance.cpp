@@ -128,6 +128,12 @@ void RenderGeometryInstanceBase::set_instance_shader_uniforms_offset(int32_t p_o
 	_mark_dirty();
 }
 
+void RenderGeometryInstanceBase::set_exclude_from_motion_blur(bool p_enable) {
+	data->exclude_from_motion_blur = p_enable;
+
+	_mark_dirty();
+}
+
 void RenderGeometryInstanceBase::set_cast_double_sided_shadows(bool p_enable) {
 	data->cast_double_sided_shadows = p_enable;
 

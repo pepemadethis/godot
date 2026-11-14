@@ -50,6 +50,9 @@
 			The global illumination mode to use for the whole geometry. To avoid inconsistent results, use a mode that matches the purpose of the mesh during gameplay (static/dynamic).
 			[b]Note:[/b] Lights' bake mode will also affect the global illumination rendering. See [member Light3D.light_bake_mode].
 		</member>
+		<member name="exclude_from_motion_blur" type="bool" setter="set_exclude_from_motion_blur" getter="is_excluded_from_motion_blur" default="false">
+			If [code]true[/code], camera motion blur ([member CameraAttributes.motion_blur_enabled]) leaves this instance sharp and does not smear it over its surroundings, while what moves behind it is still blurred. Use it for first-person weapons and hands and for the player's vehicle in a chase camera. Temporal antialiasing still sees the instance's real motion.
+		</member>
 		<member name="ignore_occlusion_culling" type="bool" setter="set_ignore_occlusion_culling" getter="is_ignoring_occlusion_culling" default="false">
 			If [code]true[/code], disables occlusion culling for this instance. Useful for gizmos that must be rendered even when occlusion culling is in use.
 			[b]Note:[/b] [member ignore_occlusion_culling] does not affect frustum culling (which is what happens when an object is not visible given the camera's angle). To avoid frustum culling, set [member custom_aabb] to a very large AABB that covers your entire game world such as [code]AABB(-10000, -10000, -10000, 20000, 20000, 20000)[/code].

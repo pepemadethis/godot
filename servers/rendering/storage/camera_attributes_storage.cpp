@@ -62,6 +62,10 @@ void RendererCameraAttributes::camera_attributes_set_dof_blur_quality(RSE::DOFBl
 	dof_blur_use_jitter = p_use_jitter;
 }
 
+void RendererCameraAttributes::camera_attributes_set_dof_blur_near_far_layers(bool p_enable) {
+	dof_blur_near_far_layers = p_enable;
+}
+
 void RendererCameraAttributes::camera_attributes_set_dof_blur_bokeh_shape(RSE::DOFBokehShape p_shape) {
 	dof_blur_bokeh_shape = p_shape;
 }
@@ -181,6 +185,101 @@ float RendererCameraAttributes::camera_attributes_get_auto_exposure_scale(RID p_
 	CameraAttributes *cam_attributes = camera_attributes_owner.get_or_null(p_camera_attributes);
 	ERR_FAIL_NULL_V(cam_attributes, 0.0);
 	return cam_attributes->auto_exposure_scale;
+}
+
+void RendererCameraAttributes::camera_attributes_set_motion_blur(RID p_camera_attributes, bool p_enable, float p_amount, float p_target_fps) {
+	CameraAttributes *cam_attributes = camera_attributes_owner.get_or_null(p_camera_attributes);
+	ERR_FAIL_NULL(cam_attributes);
+#ifdef DEBUG_ENABLED
+	if ((OS::get_singleton()->get_current_rendering_method() == "gl_compatibility" || OS::get_singleton()->get_current_rendering_method() == "mobile") && p_enable) {
+		WARN_PRINT_ONCE_ED("Motion blur is only available when using the Forward+ renderer.");
+	}
+#endif
+	cam_attributes->motion_blur_enabled = p_enable;
+	cam_attributes->motion_blur_amount = p_amount;
+	cam_attributes->motion_blur_target_fps = p_target_fps;
+}
+
+float RendererCameraAttributes::camera_attributes_get_motion_blur_amount(RID p_camera_attributes) {
+	CameraAttributes *cam_attributes = camera_attributes_owner.get_or_null(p_camera_attributes);
+	ERR_FAIL_NULL_V(cam_attributes, 0.0);
+	return cam_attributes->motion_blur_amount;
+}
+
+float RendererCameraAttributes::camera_attributes_get_motion_blur_target_fps(RID p_camera_attributes) {
+	CameraAttributes *cam_attributes = camera_attributes_owner.get_or_null(p_camera_attributes);
+	ERR_FAIL_NULL_V(cam_attributes, 0.0);
+	return cam_attributes->motion_blur_target_fps;
+}
+
+#ifdef DEBUG_ENABLED
+static void _warn_lens_effects_forward_plus_only(bool p_enable) {
+	if ((OS::get_singleton()->get_current_rendering_method() == "gl_compatibility" || OS::get_singleton()->get_current_rendering_method() == "mobile") && p_enable) {
+		WARN_PRINT_ONCE_ED("Vignette, chromatic aberration and film grain are only available when using the Forward+ renderer.");
+	}
+}
+#endif
+
+void RendererCameraAttributes::camera_attributes_set_vignette(RID p_camera_attributes, bool p_enable, float p_intensity, float p_radius) {
+	CameraAttributes *cam_attributes = camera_attributes_owner.get_or_null(p_camera_attributes);
+	ERR_FAIL_NULL(cam_attributes);
+#ifdef DEBUG_ENABLED
+	_warn_lens_effects_forward_plus_only(p_enable);
+#endif
+	cam_attributes->vignette_enabled = p_enable;
+	cam_attributes->vignette_intensity = p_intensity;
+	cam_attributes->vignette_radius = p_radius;
+}
+
+float RendererCameraAttributes::camera_attributes_get_vignette_intensity(RID p_camera_attributes) {
+	CameraAttributes *cam_attributes = camera_attributes_owner.get_or_null(p_camera_attributes);
+	ERR_FAIL_NULL_V(cam_attributes, 0.0);
+	return cam_attributes->vignette_intensity;
+}
+
+float RendererCameraAttributes::camera_attributes_get_vignette_radius(RID p_camera_attributes) {
+	CameraAttributes *cam_attributes = camera_attributes_owner.get_or_null(p_camera_attributes);
+	ERR_FAIL_NULL_V(cam_attributes, 0.0);
+	return cam_attributes->vignette_radius;
+}
+
+void RendererCameraAttributes::camera_attributes_set_chromatic_aberration(RID p_camera_attributes, bool p_enable, float p_amount) {
+	CameraAttributes *cam_attributes = camera_attributes_owner.get_or_null(p_camera_attributes);
+	ERR_FAIL_NULL(cam_attributes);
+#ifdef DEBUG_ENABLED
+	_warn_lens_effects_forward_plus_only(p_enable);
+#endif
+	cam_attributes->chromatic_aberration_enabled = p_enable;
+	cam_attributes->chromatic_aberration_amount = p_amount;
+}
+
+float RendererCameraAttributes::camera_attributes_get_chromatic_aberration_amount(RID p_camera_attributes) {
+	CameraAttributes *cam_attributes = camera_attributes_owner.get_or_null(p_camera_attributes);
+	ERR_FAIL_NULL_V(cam_attributes, 0.0);
+	return cam_attributes->chromatic_aberration_amount;
+}
+
+void RendererCameraAttributes::camera_attributes_set_film_grain(RID p_camera_attributes, bool p_enable, float p_amount, float p_size) {
+	CameraAttributes *cam_attributes = camera_attributes_owner.get_or_null(p_camera_attributes);
+	ERR_FAIL_NULL(cam_attributes);
+#ifdef DEBUG_ENABLED
+	_warn_lens_effects_forward_plus_only(p_enable);
+#endif
+	cam_attributes->film_grain_enabled = p_enable;
+	cam_attributes->film_grain_amount = p_amount;
+	cam_attributes->film_grain_size = p_size;
+}
+
+float RendererCameraAttributes::camera_attributes_get_film_grain_amount(RID p_camera_attributes) {
+	CameraAttributes *cam_attributes = camera_attributes_owner.get_or_null(p_camera_attributes);
+	ERR_FAIL_NULL_V(cam_attributes, 0.0);
+	return cam_attributes->film_grain_amount;
+}
+
+float RendererCameraAttributes::camera_attributes_get_film_grain_size(RID p_camera_attributes) {
+	CameraAttributes *cam_attributes = camera_attributes_owner.get_or_null(p_camera_attributes);
+	ERR_FAIL_NULL_V(cam_attributes, 0.0);
+	return cam_attributes->film_grain_size;
 }
 
 uint64_t RendererCameraAttributes::camera_attributes_get_auto_exposure_version(RID p_camera_attributes) {

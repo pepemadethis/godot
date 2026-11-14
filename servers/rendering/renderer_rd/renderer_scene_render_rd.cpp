@@ -452,6 +452,22 @@ void RendererSceneRenderRD::_render_buffers_copy_depth_texture(const RenderDataR
 	RD::get_singleton()->draw_command_end_label();
 }
 
+bool RendererSceneRenderRD::_dof_before_temporal(const RenderDataRD *p_render_data) {
+	if (!RSG::camera_attributes->camera_attributes_get_dof_blur_near_far_layers() || !_render_buffers_can_be_storage()) {
+		return false;
+	}
+	if (p_render_data->reflection_probe.is_valid() || p_render_data->transparent_bg || !RSG::camera_attributes->camera_attributes_uses_dof(p_render_data->camera_attributes)) {
+		return false;
+	}
+	Ref<RenderSceneBuffersRD> rb = p_render_data->render_buffers;
+	if (rb.is_null()) {
+		return false;
+	}
+	// The same conditions as for the other depth of field in post processing.
+	Size2i target_size = rb->get_target_size();
+	return target_size.x >= 8 && target_size.y >= 8 && _debug_draw_can_use_effects(debug_draw);
+}
+
 void RendererSceneRenderRD::_render_buffers_post_process_and_tonemap(const RenderDataRD *p_render_data, bool p_use_msaa) {
 	RendererRD::TextureStorage *texture_storage = RendererRD::TextureStorage::get_singleton();
 
@@ -500,7 +516,7 @@ void RendererSceneRenderRD::_render_buffers_post_process_and_tonemap(const Rende
 		using_dof = false;
 	}
 
-	if (can_use_effects && using_dof) {
+	if (can_use_effects && using_dof && !_dof_before_temporal(p_render_data)) {
 		RENDER_TIMESTAMP("Depth of Field");
 		RD::get_singleton()->draw_command_begin_label("DOF");
 
@@ -765,6 +781,18 @@ void RendererSceneRenderRD::_render_buffers_post_process_and_tonemap(const Rende
 
 		tonemap.luminance_multiplier = rb->get_luminance_multiplier();
 		tonemap.view_count = rb->get_view_count();
+
+		if (can_use_effects && p_render_data->camera_attributes.is_valid()) {
+			RID attributes = p_render_data->camera_attributes;
+			tonemap.use_vignette = RSG::camera_attributes->camera_attributes_uses_vignette(attributes);
+			tonemap.vignette_intensity = RSG::camera_attributes->camera_attributes_get_vignette_intensity(attributes);
+			tonemap.vignette_radius = RSG::camera_attributes->camera_attributes_get_vignette_radius(attributes);
+			tonemap.use_chromatic_aberration = RSG::camera_attributes->camera_attributes_uses_chromatic_aberration(attributes);
+			tonemap.chromatic_aberration_amount = RSG::camera_attributes->camera_attributes_get_chromatic_aberration_amount(attributes);
+			tonemap.use_film_grain = RSG::camera_attributes->camera_attributes_uses_film_grain(attributes);
+			tonemap.film_grain_amount = RSG::camera_attributes->camera_attributes_get_film_grain_amount(attributes);
+			tonemap.film_grain_size = RSG::camera_attributes->camera_attributes_get_film_grain_size(attributes);
+		}
 
 		RID dest_fb;
 		RD::DataFormat dest_fb_format;
@@ -1829,6 +1857,7 @@ void RendererSceneRenderRD::init() {
 
 	RSG::camera_attributes->camera_attributes_set_dof_blur_bokeh_shape(RSE::DOFBokehShape(int(GLOBAL_GET("rendering/camera/depth_of_field/depth_of_field_bokeh_shape"))));
 	RSG::camera_attributes->camera_attributes_set_dof_blur_quality(RSE::DOFBlurQuality(int(GLOBAL_GET("rendering/camera/depth_of_field/depth_of_field_bokeh_quality"))), GLOBAL_GET("rendering/camera/depth_of_field/depth_of_field_use_jitter"));
+	RSG::camera_attributes->camera_attributes_set_dof_blur_near_far_layers(GLOBAL_GET("rendering/camera/depth_of_field/depth_of_field_near_far_layers"));
 	use_physical_light_units = GLOBAL_GET("rendering/lights_and_shadows/use_physical_light_units");
 
 	screen_space_roughness_limiter = GLOBAL_GET("rendering/anti_aliasing/screen_space_roughness_limiter/enabled");

@@ -62,6 +62,9 @@ layout(set = 3, binding = 0) uniform sampler3D source_color_correction;
 #define FLAG_USE_FXAA (1 << 4)
 #define FLAG_USE_8_BIT_DEBANDING (1 << 5)
 #define FLAG_CONVERT_TO_SRGB (1 << 6)
+#define FLAG_USE_VIGNETTE (1 << 7)
+#define FLAG_USE_CHROMATIC_ABERRATION (1 << 8)
+#define FLAG_USE_FILM_GRAIN (1 << 9)
 
 layout(push_constant, std430) uniform Params {
 	vec3 bcs;
@@ -84,6 +87,12 @@ layout(push_constant, std430) uniform Params {
 	float luminance_multiplier;
 
 	vec4 tonemapper_params;
+
+	// Lens effects.
+	uint vignette; // Half floats: intensity, radius.
+	float chromatic_aberration; // Red and blue magnification, relative to green.
+	uint film_grain; // Half floats: amount, grain size in pixels.
+	uint film_grain_seed;
 }
 params;
 
@@ -851,12 +860,95 @@ vec3 screen_space_dither(vec2 frag_coord, float bit_alignment_diviser) {
 	return (dither.rgb - 0.5) / bit_alignment_diviser;
 }
 
+// Lens effects: vignette, chromatic aberration and film grain.
+
+vec3 sample_source_color(vec2 uv) {
+#ifdef USE_MULTIVIEW
+	return textureLod(source_color, vec3(uv, ViewIndex), 0.0f).rgb;
+#else
+	return textureLod(source_color, uv, 0.0f).rgb;
+#endif
+}
+
+// Lateral chromatic aberration: the lens images red a little larger than green
+// and blue a little smaller, so colour fringes grow from nothing at the centre
+// towards the edges. Reads along the line to the centre, red weighted to the
+// magnified end and blue to the reduced end (overlapping tents, a coarse
+// spectrum), spread each colour smoothly instead of splitting the picture into
+// copies; the reads stay about 1.5 pixels apart however wide the fringe gets.
+vec3 chromatic_aberration(vec2 uv) {
+	vec2 from_center = uv - 0.5;
+	float k = params.chromatic_aberration;
+	float spread = k * length(from_center / params.pixel_size); // Pixels each way, here.
+	int taps = clamp(int(ceil(spread * 2.0 / 1.5)) + 1, 5, 15) | 1;
+	vec3 sum = vec3(0.0);
+	vec3 total = vec3(0.0);
+	for (int i = 0; i < taps; i++) {
+		float t = float(i) / float(taps - 1) * 2.0 - 1.0; // -1: red's image, 0: green's, 1: blue's.
+		vec3 weight = clamp(1.0 - abs(vec3(t + 1.0, t, t - 1.0)), 0.0, 1.0);
+		sum += sample_source_color(0.5 + from_center * (1.0 + k * t)) * weight;
+		total += weight;
+	}
+	return sum / total;
+}
+
+// Darkening towards the corners: none inside the radius (a share of the way from
+// the centre to the corners), then smoothly down to 1 - intensity in the corners.
+float vignette(vec2 uv) {
+	vec2 settings = unpackHalf2x16(params.vignette);
+	float aspect = params.pixel_size.y / params.pixel_size.x;
+	vec2 from_center = (uv - 0.5) * vec2(aspect, 1.0);
+	float to_corner = length(from_center) / length(vec2(aspect, 1.0) * 0.5);
+	return 1.0 - settings.x * smoothstep(settings.y, 1.0, to_corner);
+}
+
+// pcg3d from Jarzynski and Olano, "Hash Functions for GPU Rendering", JCGT 2020.
+uvec3 pcg3d(uvec3 v) {
+	v = v * 1664525u + 1013904223u;
+	v.x += v.y * v.z;
+	v.y += v.z * v.x;
+	v.z += v.x * v.y;
+	v ^= v >> 16u;
+	v.x += v.y * v.z;
+	v.y += v.z * v.x;
+	v.z += v.x * v.y;
+	return v;
+}
+
+// A grain value in [-1, 1] for one grain cell this frame: the sum of two uniform
+// values, so its distribution is triangular, closer to film grain than a flat one.
+float film_grain_cell(vec2 cell) {
+	uvec3 h = pcg3d(uvec3(uvec2(ivec2(cell) + 65536), params.film_grain_seed));
+	return float((h.x >> 8u) + (h.y >> 8u)) / 16777216.0 - 1.0;
+}
+
+// Monochrome grain, smoothly interpolated between cells bigger than a pixel and
+// scaled back to the same strength as single-pixel grain.
+float film_grain(vec2 frag_coord, float size) {
+	if (size <= 1.0) {
+		return film_grain_cell(floor(frag_coord));
+	}
+	vec2 cell = frag_coord / size - 0.5;
+	vec2 base = floor(cell);
+	vec2 f = cell - base;
+	f = f * f * (3.0 - 2.0 * f);
+	vec4 weights = vec4((1.0 - f.x) * (1.0 - f.y), f.x * (1.0 - f.y), (1.0 - f.x) * f.y, f.x * f.y);
+	vec4 values = vec4(film_grain_cell(base), film_grain_cell(base + vec2(1.0, 0.0)), film_grain_cell(base + vec2(0.0, 1.0)), film_grain_cell(base + vec2(1.0, 1.0)));
+	return dot(weights, values) / sqrt(dot(weights, weights));
+}
+
 void main() {
 #ifdef USE_MULTIVIEW
 	vec4 color = textureLod(source_color, vec3(uv_interp, ViewIndex), 0.0f);
 #else
 	vec4 color = textureLod(source_color, uv_interp, 0.0f);
 #endif
+	// What chromatic aberration changes, before scaling.
+	vec3 aberration = vec3(0.0);
+	if (bool(params.flags & FLAG_USE_CHROMATIC_ABERRATION)) {
+		aberration = chromatic_aberration(uv_interp) - color.rgb;
+	}
+
 	color.rgb *= params.luminance_multiplier;
 
 	// Exposure
@@ -875,6 +967,11 @@ void main() {
 		color.rgb = do_fxaa(color.rgb, exposure, uv_interp);
 	}
 
+	if (bool(params.flags & FLAG_USE_CHROMATIC_ABERRATION)) {
+		// Added after FXAA, which reads the source itself, so that both work together.
+		color.rgb = max(color.rgb + aberration * params.luminance_multiplier * exposure, vec3(0.0));
+	}
+
 	if (bool(params.flags & FLAG_USE_GLOW) && params.glow_mode != GLOW_MODE_SOFTLIGHT) {
 		vec3 glow = gather_glow(source_glow, uv_interp) * params.glow_intensity;
 		if (params.glow_map_strength > 0.001) {
@@ -886,6 +983,11 @@ void main() {
 		} else {
 			color.rgb = apply_glow(color.rgb, glow, params.white);
 		}
+	}
+
+	if (bool(params.flags & FLAG_USE_VIGNETTE)) {
+		// Before tonemapping, as in a lens: bright lights in the corners still clip.
+		color.rgb *= vignette(uv_interp);
 	}
 
 	// Tonemap to lower dynamic range.
@@ -941,6 +1043,20 @@ void main() {
 		}
 	} else if (bool(params.flags & FLAG_CONVERT_TO_SRGB)) {
 		color.rgb = linear_to_srgb(color.rgb);
+	}
+
+	if (bool(params.flags & FLAG_USE_FILM_GRAIN)) {
+		// On the display-encoded (sRGB) values. As on film, strongest in the darker
+		// midtones (around a quarter of full brightness), fading into deep
+		// shadows and highlights.
+		vec2 settings = unpackHalf2x16(params.film_grain);
+		bool is_srgb = bool(params.flags & FLAG_CONVERT_TO_SRGB);
+		vec3 encoded = is_srgb ? color.rgb : linear_to_srgb(max(color.rgb, vec3(0.0)));
+		float tone = sqrt(clamp(dot(encoded, vec3(0.2126, 0.7152, 0.0722)), 0.0, 1.0));
+		float response = 1.0 - (2.0 * tone - 1.0) * (2.0 * tone - 1.0);
+		encoded += film_grain(gl_FragCoord.xy, settings.y) * settings.x * mix(0.2, 1.0, response);
+		encoded = max(encoded, vec3(0.0));
+		color.rgb = is_srgb ? encoded : srgb_to_linear(encoded);
 	}
 
 	// Debanding should be done at the end of tonemapping, but before writing to the LDR buffer.

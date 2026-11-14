@@ -438,6 +438,7 @@ public:
 
 		bool ignore_occlusion_culling;
 		bool ignore_all_culling;
+		bool exclude_from_motion_blur;
 
 		Vector<RID> materials;
 
@@ -600,6 +601,7 @@ public:
 			lightmap_cull_index = 0;
 			lod_bias = 1.0;
 			ignore_occlusion_culling = false;
+			exclude_from_motion_blur = false;
 			ignore_all_culling = false;
 
 			scenario = nullptr;

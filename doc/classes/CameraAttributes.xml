@@ -30,5 +30,15 @@
 			If [member auto_exposure_enabled] is [code]true[/code], this can be used as a method of exposure compensation, doubling the value will increase the exposure value (measured in EV100) by 1 stop.
 			[b]Note:[/b] Only available when [member ProjectSettings.rendering/lights_and_shadows/use_physical_light_units] is enabled.
 		</member>
+		<member name="motion_blur_amount" type="float" setter="set_motion_blur_amount" getter="get_motion_blur_amount" default="0.5">
+			How long the shutter stays open, as a fraction of the time between two frames: [code]0.5[/code] blurs each moving pixel over half of its motion during a frame (a 180 degree shutter), [code]1.0[/code] over all of it. Higher values give longer streaks. If [member motion_blur_target_fps] is above [code]0[/code], the frame time is that frame rate's instead of the real one.
+		</member>
+		<member name="motion_blur_enabled" type="bool" setter="set_motion_blur_enabled" getter="is_motion_blur_enabled" default="false">
+			If [code]true[/code], blurs the picture along the motion of the camera and of moving objects, using the same motion vectors as temporal antialiasing. Objects with [member GeometryInstance3D.exclude_from_motion_blur] are neither blurred nor smeared over their surroundings (for first-person weapons and the player's vehicle). Streaks are limited to about 4% of the viewport's height on either side of a pixel. Transparent objects are blurred with what is behind them.
+			[b]Note:[/b] Motion blur is only supported in the Forward+ rendering method, not Mobile or Compatibility.
+		</member>
+		<member name="motion_blur_target_fps" type="float" setter="set_motion_blur_target_fps" getter="get_motion_blur_target_fps" default="0.0">
+			If above [code]0[/code], the blur is as long as it would be at this frame rate, whatever the real frame rate is, so that a game looks the same at 60 and at 144 FPS. If [code]0[/code], the blur follows the real time between frames: faster frame rates blur less.
+		</member>
 	</members>
 </class>

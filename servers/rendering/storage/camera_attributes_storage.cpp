@@ -183,6 +183,31 @@ float RendererCameraAttributes::camera_attributes_get_auto_exposure_scale(RID p_
 	return cam_attributes->auto_exposure_scale;
 }
 
+void RendererCameraAttributes::camera_attributes_set_motion_blur(RID p_camera_attributes, bool p_enable, float p_amount, float p_target_fps) {
+	CameraAttributes *cam_attributes = camera_attributes_owner.get_or_null(p_camera_attributes);
+	ERR_FAIL_NULL(cam_attributes);
+#ifdef DEBUG_ENABLED
+	if ((OS::get_singleton()->get_current_rendering_method() == "gl_compatibility" || OS::get_singleton()->get_current_rendering_method() == "mobile") && p_enable) {
+		WARN_PRINT_ONCE_ED("Motion blur is only available when using the Forward+ renderer.");
+	}
+#endif
+	cam_attributes->motion_blur_enabled = p_enable;
+	cam_attributes->motion_blur_amount = p_amount;
+	cam_attributes->motion_blur_target_fps = p_target_fps;
+}
+
+float RendererCameraAttributes::camera_attributes_get_motion_blur_amount(RID p_camera_attributes) {
+	CameraAttributes *cam_attributes = camera_attributes_owner.get_or_null(p_camera_attributes);
+	ERR_FAIL_NULL_V(cam_attributes, 0.0);
+	return cam_attributes->motion_blur_amount;
+}
+
+float RendererCameraAttributes::camera_attributes_get_motion_blur_target_fps(RID p_camera_attributes) {
+	CameraAttributes *cam_attributes = camera_attributes_owner.get_or_null(p_camera_attributes);
+	ERR_FAIL_NULL_V(cam_attributes, 0.0);
+	return cam_attributes->motion_blur_target_fps;
+}
+
 uint64_t RendererCameraAttributes::camera_attributes_get_auto_exposure_version(RID p_camera_attributes) {
 	CameraAttributes *cam_attributes = camera_attributes_owner.get_or_null(p_camera_attributes);
 	ERR_FAIL_NULL_V(cam_attributes, 0);

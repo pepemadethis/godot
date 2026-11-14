@@ -56,6 +56,10 @@ private:
 		float dof_blur_near_distance = 2;
 		float dof_blur_near_transition = 1;
 		float dof_blur_amount = 0.1;
+
+		bool motion_blur_enabled = false;
+		float motion_blur_amount = 0.5;
+		float motion_blur_target_fps = 0.0;
 	};
 
 	RSE::DOFBlurQuality dof_blur_quality = RSE::DOF_BLUR_QUALITY_MEDIUM;
@@ -110,6 +114,16 @@ public:
 		CameraAttributes *cam_attributes = camera_attributes_owner.get_or_null(p_camera_attributes);
 
 		return cam_attributes && cam_attributes->use_auto_exposure;
+	}
+
+	void camera_attributes_set_motion_blur(RID p_camera_attributes, bool p_enable, float p_amount, float p_target_fps);
+	float camera_attributes_get_motion_blur_amount(RID p_camera_attributes);
+	float camera_attributes_get_motion_blur_target_fps(RID p_camera_attributes);
+
+	_FORCE_INLINE_ bool camera_attributes_uses_motion_blur(RID p_camera_attributes) {
+		CameraAttributes *cam_attributes = camera_attributes_owner.get_or_null(p_camera_attributes);
+
+		return cam_attributes && cam_attributes->motion_blur_enabled && cam_attributes->motion_blur_amount > 0.0;
 	}
 
 	_FORCE_INLINE_ RSE::DOFBlurQuality camera_attributes_get_dof_blur_quality() {

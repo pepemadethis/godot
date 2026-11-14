@@ -1949,6 +1949,8 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 
 	bool using_upscaling = scale_type != SCALE_NONE;
 
+	bool using_motion_blur = rb_data.is_valid() && !is_reflection_probe && RSG::camera_attributes->camera_attributes_uses_motion_blur(p_render_data->camera_attributes) && _debug_draw_can_use_effects(get_debug_draw_mode());
+
 	// check if we need motion vectors
 	bool motion_vectors_required;
 	if (using_debug_mvs) {
@@ -1959,12 +1961,16 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 		motion_vectors_required = true;
 	} else if (!is_reflection_probe && using_upscaling) {
 		motion_vectors_required = true;
+	} else if (using_motion_blur) {
+		motion_vectors_required = true;
 	} else {
 		motion_vectors_required = false;
 	}
 
 	//p_render_data->scene_data->subsurface_scatter_width = subsurface_scatter_size;
 	p_render_data->scene_data->calculate_motion_vectors = motion_vectors_required;
+	// Objects excluded from motion blur mark their motion vectors (see the scene shader).
+	p_render_data->scene_data->motion_blur_mask = using_motion_blur;
 	p_render_data->scene_data->directional_light_count = 0;
 	p_render_data->scene_data->opaque_prepass_threshold = 0.99f;
 
@@ -2593,7 +2599,8 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 
 		bool compositor_needs_resolved_depth = _compositor_effects_has_flag(p_render_data, RSE::COMPOSITOR_EFFECT_FLAG_ACCESS_RESOLVED_DEPTH, RSE::CompositorEffectCallbackType::COMPOSITOR_EFFECT_CALLBACK_TYPE_POST_TRANSPARENT);
 		bool using_dof = RSG::camera_attributes->camera_attributes_uses_dof(p_render_data->camera_attributes);
-		bool resolve_transparent_depth = (using_taa || using_upscaling || using_dof || compositor_needs_resolved_depth);
+		bool resolve_transparent_depth = (using_taa || using_upscaling || using_dof || using_motion_blur || compositor_needs_resolved_depth);
+		// Motion blur resolves its own copy of the velocity (see MotionBlur).
 		bool resolve_velocity_buffer = (using_taa || using_upscaling || ce_needs_motion_vectors) && rb->has_velocity_buffer(true);
 
 		RENDER_TIMESTAMP("Resolve Color");
@@ -2711,6 +2718,33 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 			taa->process(rb, rb->get_base_data_format(), p_render_data->scene_data->z_near, p_render_data->scene_data->z_far);
 			RD::get_singleton()->draw_command_end_label();
 		}
+	}
+
+	if (using_motion_blur && !p_render_data->transparent_bg) {
+		RENDER_TIMESTAMP("Motion Blur");
+		RD::get_singleton()->draw_command_begin_label("Motion Blur");
+
+		RendererRD::MotionBlur::Parameters params;
+		params.use_upscaled_texture = rb->has_upscaled_texture() && (scale_type == SCALE_FSR2 || scale_type == SCALE_MFX);
+		float shutter = RSG::camera_attributes->camera_attributes_get_motion_blur_amount(p_render_data->camera_attributes);
+		float target_fps = RSG::camera_attributes->camera_attributes_get_motion_blur_target_fps(p_render_data->camera_attributes);
+		if (target_fps > 0.0f && time_step > 0.0) {
+			// Blur as much as the motion over the shutter time at the target frame rate,
+			// whatever the frame rate is: velocities are per rendered frame.
+			shutter = MIN(shutter / (target_fps * float(time_step)), 16.0f);
+		}
+		params.shutter = shutter;
+		params.use_mask = true;
+		params.z_near = p_render_data->scene_data->z_near;
+		params.z_far = p_render_data->scene_data->z_far;
+		params.orthogonal = p_render_data->scene_data->cam_orthogonal;
+		params.cam_projection = p_render_data->scene_data->cam_projection;
+		params.cam_transform = p_render_data->scene_data->cam_transform;
+		params.prev_cam_projection = p_render_data->scene_data->prev_cam_projection;
+		params.prev_cam_transform = p_render_data->scene_data->prev_cam_transform;
+		motion_blur->process(rb, params);
+
+		RD::get_singleton()->draw_command_end_label();
 	}
 
 	if (rb_data.is_valid()) {
@@ -4748,6 +4782,10 @@ void RenderForwardClustered::_geometry_instance_update(RenderGeometryInstance *p
 
 	ginstance->base_flags = 0;
 
+	if (ginstance->data->exclude_from_motion_blur) {
+		ginstance->base_flags |= INSTANCE_DATA_FLAG_EXCLUDE_FROM_MOTION_BLUR;
+	}
+
 	bool store_transform = true;
 	if (ginstance->data->base_type == RSE::INSTANCE_MULTIMESH) {
 		ginstance->base_flags |= INSTANCE_DATA_FLAG_MULTIMESH;
@@ -5555,6 +5593,7 @@ RenderForwardClustered::RenderForwardClustered() {
 	_update_global_pipeline_data_requirements_from_project();
 
 	taa = memnew(RendererRD::TAA);
+	motion_blur = memnew(RendererRD::MotionBlur);
 	fsr2_effect = memnew(RendererRD::FSR2Effect);
 	ss_effects = memnew(RendererRD::SSEffects);
 #ifdef METAL_MFXTEMPORAL_ENABLED
@@ -5572,6 +5611,11 @@ RenderForwardClustered::~RenderForwardClustered() {
 	if (taa != nullptr) {
 		memdelete(taa);
 		taa = nullptr;
+	}
+
+	if (motion_blur != nullptr) {
+		memdelete(motion_blur);
+		motion_blur = nullptr;
 	}
 
 	if (fsr2_effect) {

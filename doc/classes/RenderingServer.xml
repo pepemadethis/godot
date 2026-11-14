@@ -111,6 +111,16 @@
 				[/codeblock]
 			</description>
 		</method>
+		<method name="camera_attributes_set_motion_blur">
+			<return type="void" />
+			<param index="0" name="camera_attributes" type="RID" />
+			<param index="1" name="enable" type="bool" />
+			<param index="2" name="amount" type="float" />
+			<param index="3" name="target_fps" type="float" />
+			<description>
+				Sets the parameters to use with the motion blur effect. These parameters take on the same meaning as their counterparts in [CameraAttributes].
+			</description>
+		</method>
 		<method name="camera_create">
 			<return type="RID" />
 			<description>
@@ -6050,7 +6060,10 @@
 		<constant name="INSTANCE_FLAG_IGNORE_OCCLUSION_CULLING" value="3" enum="InstanceFlags">
 			Always draw, even if the instance would be culled by occlusion culling. Does not affect view frustum culling.
 		</constant>
-		<constant name="INSTANCE_FLAG_MAX" value="4" enum="InstanceFlags">
+		<constant name="INSTANCE_FLAG_EXCLUDE_FROM_MOTION_BLUR" value="4" enum="InstanceFlags">
+			Keep the instance sharp under camera motion blur, and do not smear it over its surroundings. See [member GeometryInstance3D.exclude_from_motion_blur].
+		</constant>
+		<constant name="INSTANCE_FLAG_MAX" value="5" enum="InstanceFlags">
 			Represents the size of the [enum InstanceFlags] enum.
 		</constant>
 		<constant name="SHADOW_CASTING_SETTING_OFF" value="0" enum="ShadowCastingSetting">

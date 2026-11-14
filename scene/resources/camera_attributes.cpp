@@ -94,6 +94,38 @@ float CameraAttributes::get_auto_exposure_scale() const {
 	return auto_exposure_scale;
 }
 
+void CameraAttributes::set_motion_blur_enabled(bool p_enabled) {
+	motion_blur_enabled = p_enabled;
+	_update_motion_blur();
+	notify_property_list_changed();
+}
+
+bool CameraAttributes::is_motion_blur_enabled() const {
+	return motion_blur_enabled;
+}
+
+void CameraAttributes::set_motion_blur_amount(float p_amount) {
+	motion_blur_amount = p_amount;
+	_update_motion_blur();
+}
+
+float CameraAttributes::get_motion_blur_amount() const {
+	return motion_blur_amount;
+}
+
+void CameraAttributes::set_motion_blur_target_fps(float p_target_fps) {
+	motion_blur_target_fps = p_target_fps;
+	_update_motion_blur();
+}
+
+float CameraAttributes::get_motion_blur_target_fps() const {
+	return motion_blur_target_fps;
+}
+
+void CameraAttributes::_update_motion_blur() {
+	RS::get_singleton()->camera_attributes_set_motion_blur(camera_attributes, motion_blur_enabled, motion_blur_amount, motion_blur_target_fps);
+}
+
 RID CameraAttributes::get_rid() const {
 	return camera_attributes;
 }
@@ -108,6 +140,11 @@ void CameraAttributes::_validate_property(PropertyInfo &p_property) const {
 	}
 
 	if (p_property.name.begins_with("auto_exposure_") && p_property.name != "auto_exposure_enabled" && !auto_exposure_enabled) {
+		p_property.usage = PROPERTY_USAGE_NO_EDITOR | PROPERTY_USAGE_INTERNAL;
+		return;
+	}
+
+	if (p_property.name.begins_with("motion_blur_") && p_property.name != "motion_blur_enabled" && !motion_blur_enabled) {
 		p_property.usage = PROPERTY_USAGE_NO_EDITOR | PROPERTY_USAGE_INTERNAL;
 		return;
 	}
@@ -134,6 +171,18 @@ void CameraAttributes::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "auto_exposure_enabled", PROPERTY_HINT_GROUP_ENABLE), "set_auto_exposure_enabled", "is_auto_exposure_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "auto_exposure_scale", PROPERTY_HINT_RANGE, "0.01,64,0.01"), "set_auto_exposure_scale", "get_auto_exposure_scale");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "auto_exposure_speed", PROPERTY_HINT_RANGE, "0.01,64,0.01"), "set_auto_exposure_speed", "get_auto_exposure_speed");
+
+	ClassDB::bind_method(D_METHOD("set_motion_blur_enabled", "enabled"), &CameraAttributes::set_motion_blur_enabled);
+	ClassDB::bind_method(D_METHOD("is_motion_blur_enabled"), &CameraAttributes::is_motion_blur_enabled);
+	ClassDB::bind_method(D_METHOD("set_motion_blur_amount", "amount"), &CameraAttributes::set_motion_blur_amount);
+	ClassDB::bind_method(D_METHOD("get_motion_blur_amount"), &CameraAttributes::get_motion_blur_amount);
+	ClassDB::bind_method(D_METHOD("set_motion_blur_target_fps", "target_fps"), &CameraAttributes::set_motion_blur_target_fps);
+	ClassDB::bind_method(D_METHOD("get_motion_blur_target_fps"), &CameraAttributes::get_motion_blur_target_fps);
+
+	ADD_GROUP("Motion Blur", "motion_blur_");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "motion_blur_enabled", PROPERTY_HINT_GROUP_ENABLE), "set_motion_blur_enabled", "is_motion_blur_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "motion_blur_amount", PROPERTY_HINT_RANGE, "0.0,1.0,0.01,or_greater"), "set_motion_blur_amount", "get_motion_blur_amount");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "motion_blur_target_fps", PROPERTY_HINT_RANGE, "0,240,1,or_greater,suffix:FPS"), "set_motion_blur_target_fps", "get_motion_blur_target_fps");
 }
 
 CameraAttributes::CameraAttributes() {

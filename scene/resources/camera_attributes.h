@@ -54,6 +54,11 @@ protected:
 	float auto_exposure_scale = 0.4;
 	virtual void _update_auto_exposure() {}
 
+	bool motion_blur_enabled = false;
+	float motion_blur_amount = 0.5;
+	float motion_blur_target_fps = 0.0;
+	void _update_motion_blur();
+
 public:
 	virtual RID get_rid() const override;
 	virtual float calculate_exposure_normalization() const { return 1.0; }
@@ -69,6 +74,13 @@ public:
 	float get_auto_exposure_speed() const;
 	void set_auto_exposure_scale(float p_auto_exposure_scale);
 	float get_auto_exposure_scale() const;
+
+	void set_motion_blur_enabled(bool p_enabled);
+	bool is_motion_blur_enabled() const;
+	void set_motion_blur_amount(float p_amount);
+	float get_motion_blur_amount() const;
+	void set_motion_blur_target_fps(float p_target_fps);
+	float get_motion_blur_target_fps() const;
 
 	CameraAttributes();
 	~CameraAttributes();

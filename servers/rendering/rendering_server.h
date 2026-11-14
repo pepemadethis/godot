@@ -726,6 +726,9 @@ public:
 	virtual void camera_attributes_set_exposure(RID p_camera_attributes, float p_multiplier, float p_exposure_normalization) = 0;
 	virtual void camera_attributes_set_auto_exposure(RID p_camera_attributes, bool p_enable, float p_min_sensitivity, float p_max_sensitivity, float p_speed, float p_scale) = 0;
 	virtual void camera_attributes_set_motion_blur(RID p_camera_attributes, bool p_enable, float p_amount, float p_target_fps) = 0;
+	virtual void camera_attributes_set_vignette(RID p_camera_attributes, bool p_enable, float p_intensity, float p_radius) = 0;
+	virtual void camera_attributes_set_chromatic_aberration(RID p_camera_attributes, bool p_enable, float p_amount) = 0;
+	virtual void camera_attributes_set_film_grain(RID p_camera_attributes, bool p_enable, float p_amount, float p_size) = 0;
 
 	/* SCENARIO API */
 

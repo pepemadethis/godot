@@ -3205,6 +3205,9 @@ void RenderingServer::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("camera_attributes_set_exposure", "camera_attributes", "multiplier", "normalization"), &RenderingServer::camera_attributes_set_exposure);
 	ClassDB::bind_method(D_METHOD("camera_attributes_set_auto_exposure", "camera_attributes", "enable", "min_sensitivity", "max_sensitivity", "speed", "scale"), &RenderingServer::camera_attributes_set_auto_exposure);
 	ClassDB::bind_method(D_METHOD("camera_attributes_set_motion_blur", "camera_attributes", "enable", "amount", "target_fps"), &RenderingServer::camera_attributes_set_motion_blur);
+	ClassDB::bind_method(D_METHOD("camera_attributes_set_vignette", "camera_attributes", "enable", "intensity", "radius"), &RenderingServer::camera_attributes_set_vignette);
+	ClassDB::bind_method(D_METHOD("camera_attributes_set_chromatic_aberration", "camera_attributes", "enable", "amount"), &RenderingServer::camera_attributes_set_chromatic_aberration);
+	ClassDB::bind_method(D_METHOD("camera_attributes_set_film_grain", "camera_attributes", "enable", "amount", "size"), &RenderingServer::camera_attributes_set_film_grain);
 
 	BIND_ENUM_CONSTANT(RSE::DOF_BOKEH_BOX);
 	BIND_ENUM_CONSTANT(RSE::DOF_BOKEH_HEXAGON);

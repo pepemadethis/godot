@@ -929,6 +929,9 @@ public:
 	FUNC3(camera_attributes_set_exposure, RID, float, float)
 	FUNC6(camera_attributes_set_auto_exposure, RID, bool, float, float, float, float)
 	FUNC4(camera_attributes_set_motion_blur, RID, bool, float, float)
+	FUNC4(camera_attributes_set_vignette, RID, bool, float, float)
+	FUNC3(camera_attributes_set_chromatic_aberration, RID, bool, float)
+	FUNC4(camera_attributes_set_film_grain, RID, bool, float, float)
 
 	/* SCENARIO API */
 

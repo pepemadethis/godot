@@ -60,6 +60,17 @@ private:
 		bool motion_blur_enabled = false;
 		float motion_blur_amount = 0.5;
 		float motion_blur_target_fps = 0.0;
+
+		bool vignette_enabled = false;
+		float vignette_intensity = 0.5;
+		float vignette_radius = 0.3;
+
+		bool chromatic_aberration_enabled = false;
+		float chromatic_aberration_amount = 0.25;
+
+		bool film_grain_enabled = false;
+		float film_grain_amount = 0.3;
+		float film_grain_size = 1.0;
 	};
 
 	RSE::DOFBlurQuality dof_blur_quality = RSE::DOF_BLUR_QUALITY_MEDIUM;
@@ -124,6 +135,35 @@ public:
 		CameraAttributes *cam_attributes = camera_attributes_owner.get_or_null(p_camera_attributes);
 
 		return cam_attributes && cam_attributes->motion_blur_enabled && cam_attributes->motion_blur_amount > 0.0;
+	}
+
+	void camera_attributes_set_vignette(RID p_camera_attributes, bool p_enable, float p_intensity, float p_radius);
+	float camera_attributes_get_vignette_intensity(RID p_camera_attributes);
+	float camera_attributes_get_vignette_radius(RID p_camera_attributes);
+
+	_FORCE_INLINE_ bool camera_attributes_uses_vignette(RID p_camera_attributes) {
+		CameraAttributes *cam_attributes = camera_attributes_owner.get_or_null(p_camera_attributes);
+
+		return cam_attributes && cam_attributes->vignette_enabled && cam_attributes->vignette_intensity > 0.0;
+	}
+
+	void camera_attributes_set_chromatic_aberration(RID p_camera_attributes, bool p_enable, float p_amount);
+	float camera_attributes_get_chromatic_aberration_amount(RID p_camera_attributes);
+
+	_FORCE_INLINE_ bool camera_attributes_uses_chromatic_aberration(RID p_camera_attributes) {
+		CameraAttributes *cam_attributes = camera_attributes_owner.get_or_null(p_camera_attributes);
+
+		return cam_attributes && cam_attributes->chromatic_aberration_enabled && cam_attributes->chromatic_aberration_amount > 0.0;
+	}
+
+	void camera_attributes_set_film_grain(RID p_camera_attributes, bool p_enable, float p_amount, float p_size);
+	float camera_attributes_get_film_grain_amount(RID p_camera_attributes);
+	float camera_attributes_get_film_grain_size(RID p_camera_attributes);
+
+	_FORCE_INLINE_ bool camera_attributes_uses_film_grain(RID p_camera_attributes) {
+		CameraAttributes *cam_attributes = camera_attributes_owner.get_or_null(p_camera_attributes);
+
+		return cam_attributes && cam_attributes->film_grain_enabled && cam_attributes->film_grain_amount > 0.0;
 	}
 
 	_FORCE_INLINE_ RSE::DOFBlurQuality camera_attributes_get_dof_blur_quality() {

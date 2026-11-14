@@ -75,6 +75,9 @@ private:
 		TONEMAP_FLAG_USE_FXAA = (1 << 4),
 		TONEMAP_FLAG_USE_8_BIT_DEBANDING = (1 << 5),
 		TONEMAP_FLAG_CONVERT_TO_SRGB = (1 << 6),
+		TONEMAP_FLAG_USE_VIGNETTE = (1 << 7),
+		TONEMAP_FLAG_USE_CHROMATIC_ABERRATION = (1 << 8),
+		TONEMAP_FLAG_USE_FILM_GRAIN = (1 << 9),
 	};
 
 	enum FlagsMobile {
@@ -122,7 +125,14 @@ private:
 		float luminance_multiplier; //  4 - 96
 
 		float tonemapper_params[4]; //  16 - 112
+
+		// Lens effects, packed to fit the 128 bytes every device offers.
+		uint32_t vignette; //  4 - 116: half floats, intensity and radius.
+		float chromatic_aberration; //  4 - 120: red and blue magnification, relative to green.
+		uint32_t film_grain; //  4 - 124: half floats, amount and grain size in pixels.
+		uint32_t film_grain_seed; //  4 - 128
 	};
+	static_assert(sizeof(TonemapPushConstant) == 128);
 
 	struct TonemapPushConstantMobile {
 		float bcs[3]; // 12 - 12
@@ -193,6 +203,17 @@ public:
 		bool use_color_correction = false;
 		bool use_1d_color_correction = false;
 		RID color_correction_texture;
+
+		bool use_vignette = false;
+		float vignette_intensity = 0.5;
+		float vignette_radius = 0.3;
+
+		bool use_chromatic_aberration = false;
+		float chromatic_aberration_amount = 0.25; // Percent of the distance from the centre, at the corners.
+
+		bool use_film_grain = false;
+		float film_grain_amount = 0.3;
+		float film_grain_size = 1.0; // In pixels at 1080p.
 
 		bool use_fxaa = false;
 		enum DebandingMode {

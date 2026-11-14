@@ -766,6 +766,18 @@ void RendererSceneRenderRD::_render_buffers_post_process_and_tonemap(const Rende
 		tonemap.luminance_multiplier = rb->get_luminance_multiplier();
 		tonemap.view_count = rb->get_view_count();
 
+		if (can_use_effects && p_render_data->camera_attributes.is_valid()) {
+			RID attributes = p_render_data->camera_attributes;
+			tonemap.use_vignette = RSG::camera_attributes->camera_attributes_uses_vignette(attributes);
+			tonemap.vignette_intensity = RSG::camera_attributes->camera_attributes_get_vignette_intensity(attributes);
+			tonemap.vignette_radius = RSG::camera_attributes->camera_attributes_get_vignette_radius(attributes);
+			tonemap.use_chromatic_aberration = RSG::camera_attributes->camera_attributes_uses_chromatic_aberration(attributes);
+			tonemap.chromatic_aberration_amount = RSG::camera_attributes->camera_attributes_get_chromatic_aberration_amount(attributes);
+			tonemap.use_film_grain = RSG::camera_attributes->camera_attributes_uses_film_grain(attributes);
+			tonemap.film_grain_amount = RSG::camera_attributes->camera_attributes_get_film_grain_amount(attributes);
+			tonemap.film_grain_size = RSG::camera_attributes->camera_attributes_get_film_grain_size(attributes);
+		}
+
 		RID dest_fb;
 		RD::DataFormat dest_fb_format;
 		if (using_scaling_pass || use_smaa) {

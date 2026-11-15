@@ -182,6 +182,9 @@ public:
 	// Channel 0 is the directional light's when a shadowmask is baked for one; giving it to a positional light
 	// leaves the directional light out.
 	virtual void set_light_shadowmask_channel(int p_channel) {}
+	// Shadows baked into the shadowmask ignore occluders nearer to the surface than this many lightmap texels:
+	// a shadow smaller than a texel cannot be stored, and would darken the whole texel.
+	virtual void set_shadowmask_min_occluder_distance(float p_texels) {}
 	virtual BakeError bake(BakeQuality p_quality, bool p_use_denoiser, float p_denoiser_strength, int p_denoiser_range, int p_bounces, float p_bounce_indirect_energy, float p_bias, int p_max_texture_size, bool p_bake_sh, bool p_bake_shadowmask, bool p_texture_for_bounces, GenerateProbes p_generate_probes, const Ref<Image> &p_environment_panorama, const Basis &p_environment_transform, BakeStepFunc p_step_function = nullptr, void *p_step_userdata = nullptr, float p_exposure_normalization = 1.0, float p_supersampling_factor = 1.0) = 0;
 
 	virtual int get_bake_texture_count() const = 0;

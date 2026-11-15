@@ -1445,6 +1445,7 @@ LightmapperRD::BakeError LightmapperRD::bake(BakeQuality p_quality, bool p_use_d
 	bake_parameters.bounces = p_bounces;
 	bake_parameters.bounce_indirect_energy = p_bounce_indirect_energy;
 	bake_parameters.shadowmask_light_idx = shadowmask_light_idx;
+	bake_parameters.shadowmask_min_occluder_distance = MAX(shadowmask_min_occluder_distance, 0.0f);
 	// Same number of rays for transparency regardless of quality (it's more of a retry rather than shooting new ones).
 	bake_parameters.transparency_rays = GLOBAL_GET("rendering/lightmapping/bake_performance/max_transparency_rays");
 	bake_parameters.supersampling_factor = p_supersampling_factor;

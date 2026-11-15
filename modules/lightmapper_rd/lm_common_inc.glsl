@@ -19,6 +19,11 @@ layout(set = 0, binding = 0) uniform BakeParameters {
 	int shadowmask_light_idx;
 	uint transparency_rays;
 	float supersampling_factor;
+
+	float shadowmask_min_occluder_distance; // In lightmap texels; 0 bakes every occluder.
+	float pad0;
+	float pad1;
+	float pad2;
 }
 bake_params;
 

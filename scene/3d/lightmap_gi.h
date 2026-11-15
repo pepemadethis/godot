@@ -247,6 +247,7 @@ private:
 	bool use_texture_for_bounces = true;
 	LightmapGIData::ShadowmaskMode shadowmask_mode = LightmapGIData::SHADOWMASK_MODE_NONE;
 	bool shadowmask_positional = false;
+	float shadowmask_min_occluder_distance = 0.0; // In lightmap texels.
 	GenerateProbes gen_probes = GENERATE_PROBES_SUBDIV_8;
 	float probe_grid_spacing = 0.0; // 0: no regular grid of probes.
 	static constexpr int MAX_PROBE_GRID_POINTS = 262144;
@@ -355,6 +356,9 @@ public:
 
 	void set_shadowmask_positional(bool p_enable);
 	bool is_shadowmask_positional() const;
+
+	void set_shadowmask_min_occluder_distance(float p_texels);
+	float get_shadowmask_min_occluder_distance() const;
 
 	void set_use_texture_for_bounces(bool p_enable);
 	bool is_using_texture_for_bounces() const;

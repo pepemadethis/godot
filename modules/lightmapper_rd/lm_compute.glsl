@@ -438,6 +438,10 @@ vec2 get_vogel_disk(float p_i, float p_rotation, float p_sample_count_sqrt) {
 uint direct_light_reach = 0;
 #endif
 
+// Extra distance from the surface at which trace_direct_light()'s shadow rays start: occluders nearer than
+// this are passed over. Set only to bake a shadowmask value (shadowmask_min_occluder_distance).
+float direct_shadow_start = 0.0;
+
 void trace_direct_light(vec3 p_position, vec3 p_normal, uint p_light_index, bool p_soft_shadowing, out vec3 r_light, out vec3 r_light_dir, inout uint r_noise, float p_texel_size, out float r_shadow) {
 	const float EPSILON = 0.00001;
 
@@ -606,7 +610,7 @@ void trace_direct_light(vec3 p_position, vec3 p_normal, uint p_light_index, bool
 						vec4 hit_albedo = vec4(1.0);
 						vec3 hit_position;
 						// Offset the ray origin for AA, offset the light position for soft shadows.
-						uint ret = trace_ray_closest_hit_triangle_albedo_alpha(origin - light_disk_to_point * (bake_params.bias + length(disk_sample)), p_position - light_disk_to_point * dist, hit_albedo, hit_position);
+						uint ret = trace_ray_closest_hit_triangle_albedo_alpha(origin - light_disk_to_point * (bake_params.bias + (iter == 0 ? direct_shadow_start : 0.0) + length(disk_sample)), p_position - light_disk_to_point * dist, hit_albedo, hit_position);
 						if (ret == RAY_MISS) {
 							if (!sample_did_hit) {
 								sample_penumbra = 1.0;
@@ -647,7 +651,7 @@ void trace_direct_light(vec3 p_position, vec3 p_normal, uint p_light_index, bool
 					vec4 hit_albedo = vec4(1.0);
 					vec3 hit_position;
 					// Offset the ray origin for AA, offset the light position for soft shadows.
-					uint ret = trace_ray_closest_hit_triangle_albedo_alpha(origin + light_dir * (bake_params.bias + length(disk_sample)), light_pos, hit_albedo, hit_position);
+					uint ret = trace_ray_closest_hit_triangle_albedo_alpha(origin + light_dir * (bake_params.bias + (iter == 0 ? direct_shadow_start : 0.0) + length(disk_sample)), light_pos, hit_albedo, hit_position);
 					if (ret == RAY_MISS) {
 						if (!sample_did_hit) {
 							sample_penumbra = 1.0;
@@ -687,7 +691,7 @@ void trace_direct_light(vec3 p_position, vec3 p_normal, uint p_light_index, bool
 		for (uint iter = 0; iter < bake_params.transparency_rays; iter++) {
 			vec4 hit_albedo = vec4(1.0);
 			vec3 hit_position;
-			uint ret = trace_ray_closest_hit_triangle_albedo_alpha(p_position + shadow_dir * bake_params.bias, light_pos, hit_albedo, hit_position);
+			uint ret = trace_ray_closest_hit_triangle_albedo_alpha(p_position + shadow_dir * (bake_params.bias + (iter == 0 ? direct_shadow_start : 0.0)), light_pos, hit_albedo, hit_position);
 			if (ret == RAY_MISS) {
 				if (!did_hit) {
 					penumbra = 1.0;
@@ -984,6 +988,16 @@ void main() {
 		light_for_bounces += light * lights.data[i].indirect_energy;
 
 #ifdef USE_SHADOWMASK
+		const bool shadowmask_light = (lights.data[i].type == LIGHT_TYPE_DIRECTIONAL && i == bake_params.shadowmask_light_idx) || lights.data[i].shadowmask_channel > 0;
+		if (shadowmask_light && direct_light_reach == 2 && bake_params.shadowmask_min_occluder_distance > 0.0) {
+			// The shadowmask's value is traced again, past the occluders too near for a texel to hold their
+			// shadow. The lightmap and the bounces above keep the full shadow.
+			vec3 unused_light;
+			vec3 unused_light_dir;
+			direct_shadow_start = texel_size_world_space * bake_params.shadowmask_min_occluder_distance;
+			trace_direct_light(position, normal, i, true, unused_light, unused_light_dir, noise, texel_size_world_space, shadow);
+			direct_shadow_start = 0.0;
+		}
 		if (lights.data[i].type == LIGHT_TYPE_DIRECTIONAL && i == bake_params.shadowmask_light_idx) {
 			shadowmask_value = max(shadowmask_value, shadow);
 		} else if (lights.data[i].shadowmask_channel > 0 && direct_light_reach > 0) {

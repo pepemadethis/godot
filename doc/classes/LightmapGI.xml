@@ -76,6 +76,11 @@
 			To further speed up bake times, decrease [member bounces], disable [member use_denoiser] and/or decrease [member texel_scale].
 			To further increase quality, enable [member supersampling] and/or increase [member texel_scale].
 		</member>
+		<member name="shadowmask_min_occluder_distance" type="float" setter="set_shadowmask_min_occluder_distance" getter="get_shadowmask_min_occluder_distance" default="0.0">
+			Shadows baked into the shadowmask texture (see [member shadowmask_mode] and [member shadowmask_positional]) ignore occluders nearer to the shaded surface than this distance, in lightmap texels. A shadow smaller than a texel cannot be stored: it darkens the whole texel, so finely detailed meshes come out too dark, for example where a rib shades the panel beside it. A value around [code]1.0[/code] leaves such shadows out.
+			The lightmap itself and its bounced light are not affected. With a value above [code]0.0[/code], a baked shadow starts that far from where an object touches a surface, and light can pass geometry thinner than the distance.
+			[b]Note:[/b] Lightmaps must be baked again after changing this property.
+		</member>
 		<member name="shadowmask_mode" type="int" setter="set_shadowmask_mode" getter="get_shadowmask_mode" enum="LightmapGIData.ShadowmaskMode" default="0" experimental="">
 			The shadowmasking policy to use for directional shadows on static objects that are baked with this [LightmapGI] instance.
 			Shadowmasking allows [DirectionalLight3D] nodes to cast shadows even outside the range defined by their [member DirectionalLight3D.directional_shadow_max_distance] property. This is done by baking a texture that contains a shadowmap for the directional light, then using this texture according to the current shadowmask mode.

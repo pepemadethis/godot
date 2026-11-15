@@ -59,6 +59,9 @@ class LightmapperRD : public Lightmapper {
 		uint32_t shadowmask_light_idx = 0;
 		uint32_t transparency_rays = 0;
 		float supersampling_factor = 0.0f;
+
+		float shadowmask_min_occluder_distance = 0.0f;
+		float pad[3] = {};
 	};
 
 	struct MeshInstance {
@@ -144,6 +147,7 @@ class LightmapperRD : public Lightmapper {
 	Vector<Probe> probe_positions;
 	int min_probe_ray_count = 0;
 	bool positional_shadowmask = false; // Some omni or spot light bakes its shadow into the shadowmask.
+	float shadowmask_min_occluder_distance = 0.0; // In lightmap texels.
 
 	struct EdgeHash {
 		_FORCE_INLINE_ static uint32_t hash(const Edge &p_edge) {
@@ -318,6 +322,7 @@ public:
 	virtual void add_probe(const Vector3 &p_position) override;
 	virtual void set_min_probe_ray_count(int p_rays) override { min_probe_ray_count = p_rays; }
 	virtual void set_light_shadowmask_channel(int p_channel) override;
+	virtual void set_shadowmask_min_occluder_distance(float p_texels) override { shadowmask_min_occluder_distance = p_texels; }
 	virtual BakeError bake(BakeQuality p_quality, bool p_use_denoiser, float p_denoiser_strength, int p_denoiser_range, int p_bounces, float p_bounce_indirect_energy, float p_bias, int p_max_texture_size, bool p_bake_sh, bool p_bake_shadowmask, bool p_texture_for_bounces, GenerateProbes p_generate_probes, const Ref<Image> &p_environment_panorama, const Basis &p_environment_transform, BakeStepFunc p_step_function = nullptr, void *p_bake_userdata = nullptr, float p_exposure_normalization = 1.0, float p_supersampling_factor = 1.0f) override;
 
 	int get_bake_texture_count() const override;

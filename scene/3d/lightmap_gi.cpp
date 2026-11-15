@@ -1794,6 +1794,7 @@ LightmapGI::BakeError LightmapGI::bake(Node *p_from_node, String p_image_data_pa
 			// A grid is sampled per pixel, where each probe's noise shows as blotches.
 			lightmapper->set_min_probe_ray_count(GLOBAL_GET("rendering/lightmapping/bake_quality/probe_grid_ray_count"));
 		}
+		lightmapper->set_shadowmask_min_occluder_distance(shadowmask_min_occluder_distance);
 	}
 
 	Ref<Image> environment_image;
@@ -2329,6 +2330,14 @@ bool LightmapGI::is_shadowmask_positional() const {
 	return shadowmask_positional;
 }
 
+void LightmapGI::set_shadowmask_min_occluder_distance(float p_texels) {
+	shadowmask_min_occluder_distance = MAX(p_texels, 0.0f);
+}
+
+float LightmapGI::get_shadowmask_min_occluder_distance() const {
+	return shadowmask_min_occluder_distance;
+}
+
 void LightmapGI::set_use_texture_for_bounces(bool p_enable) {
 	use_texture_for_bounces = p_enable;
 }
@@ -2604,6 +2613,9 @@ void LightmapGI::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("set_shadowmask_positional", "enable"), &LightmapGI::set_shadowmask_positional);
 	ClassDB::bind_method(D_METHOD("is_shadowmask_positional"), &LightmapGI::is_shadowmask_positional);
 
+	ClassDB::bind_method(D_METHOD("set_shadowmask_min_occluder_distance", "texels"), &LightmapGI::set_shadowmask_min_occluder_distance);
+	ClassDB::bind_method(D_METHOD("get_shadowmask_min_occluder_distance"), &LightmapGI::get_shadowmask_min_occluder_distance);
+
 	ClassDB::bind_method(D_METHOD("set_use_texture_for_bounces", "use_texture_for_bounces"), &LightmapGI::set_use_texture_for_bounces);
 	ClassDB::bind_method(D_METHOD("is_using_texture_for_bounces"), &LightmapGI::is_using_texture_for_bounces);
 
@@ -2625,6 +2637,7 @@ void LightmapGI::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "specular_intensity", PROPERTY_HINT_RANGE, "0,10,0.01"), "set_specular_intensity", "get_specular_intensity");
 	ADD_PROPERTY(PropertyInfo(Variant::INT, "shadowmask_mode", PROPERTY_HINT_ENUM, "None,Replace,Overlay"), "set_shadowmask_mode", "get_shadowmask_mode");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "shadowmask_positional"), "set_shadowmask_positional", "is_shadowmask_positional");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "shadowmask_min_occluder_distance", PROPERTY_HINT_RANGE, "0,4,0.05,or_greater"), "set_shadowmask_min_occluder_distance", "get_shadowmask_min_occluder_distance");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "use_texture_for_bounces"), "set_use_texture_for_bounces", "is_using_texture_for_bounces");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "interior"), "set_interior", "is_interior");
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "use_denoiser"), "set_use_denoiser", "is_using_denoiser");

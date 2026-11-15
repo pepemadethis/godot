@@ -293,6 +293,7 @@ public:
 		PagedArray<RenderGeometryInstance *> instances;
 		PagedArray<RenderGeometryInstance *> dynamic_instances;
 		ShadowStaticCacheMode static_cache_mode = SHADOW_STATIC_CACHE_NONE;
+		uint32_t static_cache_slot = 0; // Directional lights: which of the views' caches (see RendererLightStorage).
 	};
 
 	// Whether render_scene() understands RenderShadowData's static cache modes.

@@ -2869,28 +2869,41 @@ void LightStorage::update_directional_shadow_atlas() {
 		directional_shadow.fb = RD::get_singleton()->framebuffer_create(fb_tex);
 		directional_shadow.static_generation++;
 	}
+}
 
-	if (directional_shadow.static_cache && directional_shadow.static_depth.is_null() && directional_shadow.size > 0) {
-		RD::TextureFormat tf;
-		tf.format = get_shadow_atlas_depth_format(directional_shadow.use_16_bits);
-		tf.width = directional_shadow.size;
-		tf.height = directional_shadow.size;
-		tf.usage_bits = get_shadow_atlas_depth_usage_bits();
+void LightStorage::directional_shadow_ensure_static_cache_slot(uint32_t p_slot) {
+	// A new texture's content is undefined. That needs no new generation: a slot is only drawn
+	// into by a cascade that is rebuilding, and the cascades that share it are stale until they do.
+	ERR_FAIL_UNSIGNED_INDEX(p_slot, DIRECTIONAL_SHADOW_STATIC_CACHE_SLOTS);
+	if (!directional_shadow.static_cache || directional_shadow.static_depth[p_slot].is_valid() || directional_shadow.size <= 0) {
+		return;
+	}
+	RD::TextureFormat tf;
+	tf.format = get_shadow_atlas_depth_format(directional_shadow.use_16_bits);
+	tf.width = directional_shadow.size;
+	tf.height = directional_shadow.size;
+	tf.usage_bits = get_shadow_atlas_depth_usage_bits();
 
-		directional_shadow.static_depth = RD::get_singleton()->texture_create(tf, RD::TextureView());
-		RD::get_singleton()->set_resource_name(directional_shadow.static_depth, "Directional shadow static cache");
-		Vector<RID> fb_tex;
-		fb_tex.push_back(directional_shadow.static_depth);
-		directional_shadow.static_fb = RD::get_singleton()->framebuffer_create(fb_tex);
-		directional_shadow.static_generation++;
+	directional_shadow.static_depth[p_slot] = RD::get_singleton()->texture_create(tf, RD::TextureView());
+	RD::get_singleton()->set_resource_name(directional_shadow.static_depth[p_slot], vformat("Directional shadow static cache, view %d", p_slot));
+	Vector<RID> fb_tex;
+	fb_tex.push_back(directional_shadow.static_depth[p_slot]);
+	directional_shadow.static_fb[p_slot] = RD::get_singleton()->framebuffer_create(fb_tex);
+}
+
+void LightStorage::directional_shadow_free_static_cache_slot(uint32_t p_slot) {
+	// The caller stops using what the slot held (see RendererSceneCull::_directional_cache_view_slot()).
+	ERR_FAIL_UNSIGNED_INDEX(p_slot, DIRECTIONAL_SHADOW_STATIC_CACHE_SLOTS);
+	if (directional_shadow.static_depth[p_slot].is_valid()) {
+		RD::get_singleton()->free_rid(directional_shadow.static_depth[p_slot]);
+		directional_shadow.static_depth[p_slot] = RID();
+		directional_shadow.static_fb[p_slot] = RID();
 	}
 }
 
 void LightStorage::_directional_shadow_free_static_cache() {
-	if (directional_shadow.static_depth.is_valid()) {
-		RD::get_singleton()->free_rid(directional_shadow.static_depth);
-		directional_shadow.static_depth = RID();
-		directional_shadow.static_fb = RID();
+	for (uint32_t i = 0; i < DIRECTIONAL_SHADOW_STATIC_CACHE_SLOTS; i++) {
+		directional_shadow_free_static_cache_slot(i);
 	}
 	directional_shadow.static_generation++;
 }
@@ -2899,7 +2912,7 @@ void LightStorage::directional_shadow_set_static_cache(bool p_enable) {
 	if (directional_shadow.static_cache == p_enable) {
 		return;
 	}
-	// The texture is made on the next atlas update; turning the cache off frees it.
+	// A slot's texture is made when it is first drawn into; turning the cache off frees them all.
 	_directional_shadow_free_static_cache();
 	directional_shadow.static_cache = p_enable;
 }
@@ -2926,9 +2939,8 @@ void LightStorage::directional_shadow_atlas_set_size(int p_size, bool p_16_bits)
 }
 
 void LightStorage::set_directional_shadow_count(int p_count) {
-	if (directional_shadow.light_count != p_count) {
-		directional_shadow.static_generation++; // Each light's region moves.
-	}
+	// Cached cascades are keyed by the light count too (each light's region moves with it), so
+	// views of worlds with different counts do not make each other's caches stale.
 	directional_shadow.light_count = p_count;
 	directional_shadow.current_light = 0;
 }

@@ -795,7 +795,7 @@ private:
 		SHADOW_DESTINATION_ATLAS_OVER_CACHE, // Restore the light's region from the static cache, then draw over it.
 	};
 
-	void _render_shadow_pass(RID p_light, RID p_shadow_atlas, int p_pass, const PagedArray<RenderGeometryInstance *> &p_instances, float p_lod_distance_multiplier = 0, float p_screen_mesh_lod_threshold = 0.0, bool p_open_pass = true, bool p_close_pass = true, bool p_clear_region = true, RenderingServerTypes::RenderInfo *p_render_info = nullptr, const Size2i &p_viewport_size = Size2i(1, 1), const Transform3D &p_main_cam_transform = Transform3D(), ShadowDestination p_destination = SHADOW_DESTINATION_ATLAS);
+	void _render_shadow_pass(RID p_light, RID p_shadow_atlas, int p_pass, const PagedArray<RenderGeometryInstance *> &p_instances, float p_lod_distance_multiplier = 0, float p_screen_mesh_lod_threshold = 0.0, bool p_open_pass = true, bool p_close_pass = true, bool p_clear_region = true, RenderingServerTypes::RenderInfo *p_render_info = nullptr, const Size2i &p_viewport_size = Size2i(1, 1), const Transform3D &p_main_cam_transform = Transform3D(), ShadowDestination p_destination = SHADOW_DESTINATION_ATLAS, uint32_t p_cache_slot = 0);
 	void _get_omni_shadow_atlas_slots(RID p_light, RID p_shadow_atlas, Rect2i r_slots[2]);
 	void _render_positional_shadow(const RenderShadowData &p_shadow, RID p_shadow_atlas, float p_lod_distance_multiplier, float p_screen_mesh_lod_threshold, bool p_open_pass, bool p_close_pass, RenderingServerTypes::RenderInfo *p_render_info, const Size2i &p_viewport_size, const Transform3D &p_main_cam_transform);
 	void _render_shadow_begin();

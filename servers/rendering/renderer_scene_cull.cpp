@@ -2187,7 +2187,49 @@ void RendererSceneCull::_update_instance_lightmap_captures(Instance *p_instance)
 	geom->geometry_instance->set_lightmap_capture(p_instance->lightmap_sh.ptr());
 }
 
-void RendererSceneCull::_light_instance_setup_directional_shadow(int p_shadow_index, Instance *p_instance, const Transform3D p_cam_transform, const Projection &p_cam_projection, bool p_cam_orthogonal, bool p_cam_vaspect) {
+int RendererSceneCull::_directional_cache_view_slot(RID p_viewport) {
+	if (!directional_static_cache || !p_viewport.is_valid() || !scene_render->shadow_static_cache_is_supported()) {
+		return -1;
+	}
+	const uint64_t view_id = p_viewport.get_id();
+	const uint64_t frame = Engine::get_singleton()->get_frames_drawn();
+	const uint32_t max_views = MIN(directional_static_cache_max_views, DIRECTIONAL_CACHE_MAX_VIEWS);
+	int found = -1;
+	int free_slot = -1;
+	for (uint32_t i = 0; i < DIRECTIONAL_CACHE_MAX_VIEWS; i++) {
+		DirectionalCacheView &view = directional_cache_views[i];
+		if (view.view_id != 0 && view.view_id != view_id && frame - view.last_frame > DIRECTIONAL_CACHE_VIEW_EXPIRE_FRAMES) {
+			// The view stopped rendering: its slot and cache texture are free again.
+			view.view_id = 0;
+			RSG::light_storage->directional_shadow_free_static_cache_slot(i);
+		}
+		if (view.view_id == view_id) {
+			found = i;
+		} else if (view.view_id == 0 && free_slot == -1 && i < max_views) {
+			free_slot = i;
+		}
+	}
+	if (found != -1) {
+		DirectionalCacheView &view = directional_cache_views[found];
+		if (view.last_frame == frame) {
+			// Rendered twice in one frame, each time with its own cascades: one cache cannot serve both.
+			view.blocked_until = frame + DIRECTIONAL_CACHE_VIEW_EXPIRE_FRAMES;
+		}
+		view.last_frame = frame;
+		return frame >= view.blocked_until ? found : -1;
+	}
+	if (free_slot != -1) {
+		// Cached from its next frame on, so a view that renders only once takes no cache texture.
+		DirectionalCacheView &view = directional_cache_views[free_slot];
+		view.view_id = view_id;
+		view.epoch = ++directional_cache_epoch;
+		view.last_frame = frame;
+		view.blocked_until = 0;
+	}
+	return -1;
+}
+
+void RendererSceneCull::_light_instance_setup_directional_shadow(int p_shadow_index, int p_shadow_count, int p_cache_slot, Instance *p_instance, const Transform3D p_cam_transform, const Projection &p_cam_projection, bool p_cam_orthogonal, bool p_cam_vaspect) {
 	// For later tight culling, the light culler needs to know the details of the directional light.
 	light_culler->prepare_directional_light_begin(p_instance, p_shadow_index);
 
@@ -2239,24 +2281,26 @@ void RendererSceneCull::_light_instance_setup_directional_shadow(int p_shadow_in
 	cull.shadows[p_shadow_index].light_instance = light->instance;
 	cull.shadows[p_shadow_index].caster_mask = RSG::light_storage->light_get_shadow_caster_mask(p_instance->base);
 
-	// Static cache: usable when exactly one camera renders this light each frame and the light's
-	// direction, split count and atlas slot are the ones the cache was made for.
+	// Static cache: usable when the view has a cache slot (see _directional_cache_view_slot()) and
+	// the light's direction, split count and atlas region are the ones this view's cache was made for.
 	bool use_static_cache = false;
-	if (directional_static_cache && scene_render->shadow_static_cache_is_supported()) {
-		const uint64_t frame = Engine::get_singleton()->get_frames_drawn();
-		if (light->directional_cache_frame == frame) {
-			light->directional_cache_blocked_until = frame + 60;
+	InstanceLightData::DirectionalViewCache *view_cache = nullptr;
+	if (p_cache_slot >= 0) {
+		if (light->directional_cache.size() <= (uint32_t)p_cache_slot) {
+			light->directional_cache.resize(p_cache_slot + 1);
 		}
-		light->directional_cache_frame = frame;
-		const bool same_setup = light->directional_cache_basis.is_equal_approx(light_transform.basis) && light->directional_cache_splits == splits && light->directional_cache_index == p_shadow_index;
-		use_static_cache = frame >= light->directional_cache_blocked_until && same_setup;
+		view_cache = &light->directional_cache[p_cache_slot];
+		const uint64_t epoch = directional_cache_views[p_cache_slot].epoch;
+		use_static_cache = view_cache->epoch == epoch && view_cache->basis.is_equal_approx(light_transform.basis) && view_cache->splits == splits && view_cache->index == p_shadow_index && view_cache->count == p_shadow_count;
 		if (!use_static_cache) {
-			for (InstanceLightData::DirectionalCascadeCache &cc : light->directional_cache) {
+			for (InstanceLightData::DirectionalCascadeCache &cc : view_cache->cascades) {
 				cc.valid = false;
 			}
-			light->directional_cache_basis = light_transform.basis;
-			light->directional_cache_splits = splits;
-			light->directional_cache_index = p_shadow_index;
+			view_cache->epoch = epoch;
+			view_cache->basis = light_transform.basis;
+			view_cache->splits = splits;
+			view_cache->index = p_shadow_index;
+			view_cache->count = p_shadow_count;
 			// A changed setup is cached from the next frame on.
 		}
 	}
@@ -2444,7 +2488,7 @@ void RendererSceneCull::_light_instance_setup_directional_shadow(int p_shadow_in
 			if (!fit.ok) {
 				continue;
 			}
-			InstanceLightData::DirectionalCascadeCache &cc = light->directional_cache[i];
+			InstanceLightData::DirectionalCascadeCache &cc = view_cache->cascades[i];
 			const real_t r = fit.radius + fit.soft_shadow_expand;
 
 			// How far the slice moved since last frame (largest axis), and the room it has left in the box
@@ -2520,7 +2564,7 @@ void RendererSceneCull::_light_instance_setup_directional_shadow(int p_shadow_in
 			if (!fit.ok || (needs[i] == CASCADE_NEED_NOW && !rebuild[i])) {
 				continue; // Drawn without the cache this frame.
 			}
-			InstanceLightData::DirectionalCascadeCache &cc = light->directional_cache[i];
+			InstanceLightData::DirectionalCascadeCache &cc = view_cache->cascades[i];
 			if (rebuild[i]) {
 				// Re-centre on the camera slice, snapped to the box's own texels so shadows stay stable.
 				const real_t r = fit.radius + fit.soft_shadow_expand;
@@ -2556,7 +2600,8 @@ void RendererSceneCull::_light_instance_setup_directional_shadow(int p_shadow_in
 			continue;
 		}
 		const bool cached = cull.shadows[p_shadow_index].cascades[i].static_cache_mode != RendererSceneRender::SHADOW_STATIC_CACHE_NONE;
-		const InstanceLightData::DirectionalCascadeCache &cc = light->directional_cache[i];
+		static const InstanceLightData::DirectionalCascadeCache no_cache;
+		const InstanceLightData::DirectionalCascadeCache &cc = cached ? view_cache->cascades[i] : no_cache;
 
 		//now that we know all ranges, we can proceed to make the light frustum planes, for culling octree
 
@@ -3727,8 +3772,9 @@ void RendererSceneCull::_render_scene(const RendererSceneRender::CameraData *p_c
 
 		RSG::light_storage->set_directional_shadow_count(lights_with_shadow.size());
 
+		cull.static_cache_slot = lights_with_shadow.is_empty() ? -1 : _directional_cache_view_slot(p_viewport);
 		for (int i = 0; i < lights_with_shadow.size(); i++) {
-			_light_instance_setup_directional_shadow(i, lights_with_shadow[i], p_camera_data->main_transform, p_camera_data->main_projection, p_camera_data->is_orthogonal, p_camera_data->vaspect);
+			_light_instance_setup_directional_shadow(i, lights_with_shadow.size(), cull.static_cache_slot, lights_with_shadow[i], p_camera_data->main_transform, p_camera_data->main_projection, p_camera_data->is_orthogonal, p_camera_data->vaspect);
 		}
 	}
 
@@ -3837,6 +3883,7 @@ void RendererSceneCull::_render_scene(const RendererSceneRender::CameraData *p_c
 				render_shadow_data[max_shadows_used].instances.merge_unordered(scene_cull_result.directional_shadows[i].cascade_geometry_instances[j]);
 				render_shadow_data[max_shadows_used].dynamic_instances.merge_unordered(scene_cull_result.directional_shadows[i].cascade_dynamic_instances[j]);
 				render_shadow_data[max_shadows_used].static_cache_mode = c.static_cache_mode;
+				render_shadow_data[max_shadows_used].static_cache_slot = MAX(cull.static_cache_slot, 0);
 				max_shadows_used++;
 			}
 		}
@@ -4876,6 +4923,7 @@ RendererSceneCull::RendererSceneCull() {
 	thread_cull_threshold = GLOBAL_GET("rendering/limits/spatial_indexer/threaded_cull_minimum_instances");
 	directional_static_cache = GLOBAL_GET("rendering/lights_and_shadows/directional_shadow/static_cache");
 	directional_static_cache_margin = GLOBAL_GET("rendering/lights_and_shadows/directional_shadow/static_cache_margin");
+	directional_static_cache_max_views = GLOBAL_GET("rendering/lights_and_shadows/directional_shadow/static_cache_max_views");
 	thread_cull_threshold = MAX(thread_cull_threshold, (uint32_t)WorkerThreadPool::get_singleton()->get_thread_count()); //make sure there is at least one thread per CPU
 	RendererSceneOcclusionCull::HZBuffer::occlusion_jitter_enabled = GLOBAL_GET("rendering/occlusion_culling/jitter_projection");
 

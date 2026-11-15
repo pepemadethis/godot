@@ -459,10 +459,11 @@ private:
 		bool use_16_bits = true;
 		int current_light = 0;
 
-		// Static cache: the static casters' depth per cascade, same layout as `depth`.
+		// Static cache: the static casters' depth per cascade, same layout as `depth`, one texture
+		// per view slot, made when the slot is first drawn into.
 		bool static_cache = false;
-		RID static_depth;
-		RID static_fb;
+		RID static_depth[DIRECTIONAL_SHADOW_STATIC_CACHE_SLOTS];
+		RID static_fb[DIRECTIONAL_SHADOW_STATIC_CACHE_SLOTS];
 		// Changes whenever cached regions become invalid (atlas recreated, regions moved).
 		uint64_t static_generation = 1;
 	} directional_shadow;
@@ -1229,15 +1230,17 @@ public:
 
 	void _directional_shadow_free_static_cache();
 
-	_FORCE_INLINE_ RID directional_shadow_get_static_texture() {
-		return directional_shadow.static_depth;
+	_FORCE_INLINE_ RID directional_shadow_get_static_texture(uint32_t p_slot) {
+		return p_slot < DIRECTIONAL_SHADOW_STATIC_CACHE_SLOTS ? directional_shadow.static_depth[p_slot] : RID();
 	}
 
-	_FORCE_INLINE_ RID directional_shadow_get_static_fb() {
-		return directional_shadow.static_fb;
+	_FORCE_INLINE_ RID directional_shadow_get_static_fb(uint32_t p_slot) {
+		return p_slot < DIRECTIONAL_SHADOW_STATIC_CACHE_SLOTS ? directional_shadow.static_fb[p_slot] : RID();
 	}
 
+	void directional_shadow_ensure_static_cache_slot(uint32_t p_slot);
 	virtual void directional_shadow_set_static_cache(bool p_enable) override;
+	virtual void directional_shadow_free_static_cache_slot(uint32_t p_slot) override;
 	virtual uint64_t directional_shadow_get_static_generation() override;
 
 	/* SHADOW CUBEMAPS */

@@ -3700,6 +3700,7 @@ void RenderingServer::init() {
 	GLOBAL_DEF("rendering/lights_and_shadows/directional_shadow/16_bits", true);
 	GLOBAL_DEF("rendering/lights_and_shadows/directional_shadow/static_cache", false);
 	GLOBAL_DEF(PropertyInfo(Variant::FLOAT, "rendering/lights_and_shadows/directional_shadow/static_cache_margin", PROPERTY_HINT_RANGE, "0.05,1.0,0.01"), 0.2);
+	GLOBAL_DEF(PropertyInfo(Variant::INT, "rendering/lights_and_shadows/directional_shadow/static_cache_max_views", PROPERTY_HINT_RANGE, "1,8,1"), 4);
 
 	GLOBAL_DEF_RST(PropertyInfo(Variant::BOOL, "rendering/lights_and_shadows/multi_bounce_occlusion/enabled"), false);
 

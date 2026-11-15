@@ -650,6 +650,23 @@ public:
 	static constexpr uint32_t DIRECTIONAL_CACHE_REBUILDS_PER_FRAME = 1;
 	uint64_t directional_cache_rebuild_frame = UINT64_MAX;
 	uint32_t directional_cache_rebuilds = 0; // Rebuilds granted in directional_cache_rebuild_frame.
+	// One cache per view (viewport) that renders directional shadows, so each player of a split
+	// screen keeps one. A view takes a slot the first time it renders and is cached from its next
+	// frames on; a view that stops rendering gives the slot up after
+	// DIRECTIONAL_CACHE_VIEW_EXPIRE_FRAMES. Views beyond directional_static_cache_max_views, and
+	// renders without a viewport (reflection probes), are drawn without the cache. Each slot has
+	// its own cache texture in the light storage, made when the slot first rebuilds a cascade.
+	static constexpr uint32_t DIRECTIONAL_CACHE_MAX_VIEWS = RendererLightStorage::DIRECTIONAL_SHADOW_STATIC_CACHE_SLOTS;
+	static constexpr uint64_t DIRECTIONAL_CACHE_VIEW_EXPIRE_FRAMES = 60;
+	struct DirectionalCacheView {
+		uint64_t view_id = 0; // The viewport's RID id; 0 when the slot is free.
+		uint64_t epoch = 0; // Changes each time the slot changes hands, so lights drop what they cached for it.
+		uint64_t last_frame = 0;
+		uint64_t blocked_until = 0; // The view rendered twice in one frame: no cache for a while.
+	} directional_cache_views[DIRECTIONAL_CACHE_MAX_VIEWS];
+	uint32_t directional_static_cache_max_views = 4; // rendering/lights_and_shadows/directional_shadow/static_cache_max_views
+	uint64_t directional_cache_epoch = 0;
+	int _directional_cache_view_slot(RID p_viewport);
 	static void _shadow_static_change(Instance *p_instance, const AABB &p_aabb);
 	mutable SelfList<Instance>::List shadow_dynamic_list;
 	uint64_t shadow_dynamic_list_frame = UINT64_MAX;
@@ -764,12 +781,19 @@ public:
 			// The camera slice's centre in light space last frame, to tell how fast it nears the box's edge.
 			bool slice_seen = false;
 			real_t slice_x = 0, slice_y = 0, slice_z = 0;
-		} directional_cache[RendererSceneRender::MAX_DIRECTIONAL_LIGHT_CASCADES];
-		Basis directional_cache_basis;
-		int directional_cache_splits = 0;
-		int directional_cache_index = -1;
-		uint64_t directional_cache_frame = UINT64_MAX;
-		uint64_t directional_cache_blocked_until = 0; // Several cameras render this light: no cache.
+		};
+		// What this light has cached for one view (a slot of RendererSceneCull::directional_cache_views).
+		struct DirectionalViewCache {
+			uint64_t epoch = 0; // The slot's epoch the cascades were cached for.
+			DirectionalCascadeCache cascades[RendererSceneRender::MAX_DIRECTIONAL_LIGHT_CASCADES];
+			// The setup they were cached for: the light's direction and split count, and its place
+			// among the view's shadowed directional lights, which gives its region of the atlas.
+			Basis basis;
+			int splits = 0;
+			int index = -1;
+			int count = 0;
+		};
+		LocalVector<DirectionalViewCache> directional_cache; // By view slot.
 
 	private:
 		// Instead of a single dirty flag, we maintain a count
@@ -1168,7 +1192,7 @@ public:
 	}
 	void _unpair_instance(Instance *p_instance);
 
-	void _light_instance_setup_directional_shadow(int p_shadow_index, Instance *p_instance, const Transform3D p_cam_transform, const Projection &p_cam_projection, bool p_cam_orthogonal, bool p_cam_vaspect);
+	void _light_instance_setup_directional_shadow(int p_shadow_index, int p_shadow_count, int p_cache_slot, Instance *p_instance, const Transform3D p_cam_transform, const Projection &p_cam_projection, bool p_cam_orthogonal, bool p_cam_vaspect);
 
 	_FORCE_INLINE_ bool _light_instance_update_shadow(Instance *p_instance, const Transform3D p_cam_transform, const Projection &p_cam_projection, bool p_cam_orthogonal, bool p_cam_vaspect, RID p_shadow_atlas, Scenario *p_scenario, float p_screen_mesh_lod_threshold, uint32_t p_visible_layers = 0xFFFFFF);
 
@@ -1201,6 +1225,7 @@ public:
 		} shadows[RendererSceneRender::MAX_DIRECTIONAL_LIGHTS];
 
 		uint32_t shadow_count;
+		int static_cache_slot = -1; // The view's slot in directional_cache_views; -1 = no cache.
 
 		struct SDFGI {
 			//have arrays here because SDFGI functions expects this, plus regions can have areas

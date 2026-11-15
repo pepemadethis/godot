@@ -444,6 +444,11 @@ void RenderForwardClustered::_render_list_template(RenderingDevice::DrawListID p
 
 		switch (p_pass_mode) {
 			case PASS_MODE_COLOR: {
+				if constexpr ((p_color_pass_flags & COLOR_PASS_FLAG_DISTORTION) != 0) {
+					pipeline_key.version = SceneShaderForwardClustered::PIPELINE_VERSION_DISTORTION_PASS;
+					break;
+				}
+
 				if (element_info.uses_lightmap) {
 					pipeline_key.color_pass_flags |= SceneShaderForwardClustered::PIPELINE_COLOR_PASS_FLAG_LIGHTMAP;
 				} else {
@@ -656,6 +661,7 @@ void RenderForwardClustered::_render_list(RenderingDevice::DrawListID p_draw_lis
 				VALID_FLAG_COMBINATION(COLOR_PASS_FLAG_MOTION_VECTORS);
 				VALID_FLAG_COMBINATION(COLOR_PASS_FLAG_SEPARATE_SPECULAR | COLOR_PASS_FLAG_MULTIVIEW | COLOR_PASS_FLAG_MOTION_VECTORS);
 				VALID_FLAG_COMBINATION(COLOR_PASS_FLAG_TRANSPARENT | COLOR_PASS_FLAG_MULTIVIEW | COLOR_PASS_FLAG_MOTION_VECTORS);
+				VALID_FLAG_COMBINATION(COLOR_PASS_FLAG_DISTORTION);
 				default: {
 					ERR_FAIL_MSG("Invalid color pass flag combination " + itos(p_params->color_pass_flags));
 				}
@@ -947,6 +953,7 @@ void RenderForwardClustered::_fill_render_list(RenderListType p_render_list, con
 		scene_state.used_screen_texture = false;
 		scene_state.used_normal_texture = false;
 		scene_state.used_depth_texture = false;
+		scene_state.used_distortion = false;
 		scene_state.used_lightmap = false;
 		scene_state.used_opaque_stencil = false;
 	}
@@ -1158,6 +1165,16 @@ void RenderForwardClustered::_fill_render_list(RenderListType p_render_list, con
 
 				if (fade_alpha < FADE_ALPHA_PASS_THRESHOLD) {
 					force_alpha = true;
+				}
+
+				if (surf->flags & GeometryInstanceSurfaceDataCache::FLAG_PASS_DISTORTION) {
+					// Kept in the transparent list, drawn only by the distortion pass (see the inclusion mask).
+					surf->color_pass_inclusion_mask = COLOR_PASS_FLAG_DISTORTION;
+					render_list[RENDER_LIST_ALPHA].add_element(surf);
+					scene_state.used_distortion = true;
+					surf->sort.depth_layer = depth_layer;
+					surf = surf->next;
+					continue;
 				}
 
 				if (!force_alpha && (surf->flags & (GeometryInstanceSurfaceDataCache::FLAG_PASS_DEPTH | GeometryInstanceSurfaceDataCache::FLAG_PASS_OPAQUE))) {
@@ -2595,7 +2612,7 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 
 		bool compositor_needs_resolved_depth = _compositor_effects_has_flag(p_render_data, RSE::COMPOSITOR_EFFECT_FLAG_ACCESS_RESOLVED_DEPTH, RSE::CompositorEffectCallbackType::COMPOSITOR_EFFECT_CALLBACK_TYPE_POST_TRANSPARENT);
 		bool using_dof = RSG::camera_attributes->camera_attributes_uses_dof(p_render_data->camera_attributes);
-		bool resolve_transparent_depth = (using_taa || using_upscaling || using_dof || using_motion_blur || compositor_needs_resolved_depth);
+		bool resolve_transparent_depth = (using_taa || using_upscaling || using_dof || using_motion_blur || compositor_needs_resolved_depth || scene_state.used_distortion);
 		// Motion blur resolves its own copy of the velocity (see MotionBlur).
 		bool resolve_velocity_buffer = (using_taa || using_upscaling || ce_needs_motion_vectors) && rb->has_velocity_buffer(true);
 
@@ -2754,6 +2771,30 @@ void RenderForwardClustered::_render_scene(RenderDataRD *p_render_data, const Co
 		motion_blur->process(rb, params);
 
 		RD::get_singleton()->draw_command_end_label();
+	}
+
+	if (rb_data.is_valid() && scene_state.used_distortion && rb->get_view_count() == 1) {
+		// Heat and space distortion (as in Doom 2016 and Eternal, from frame analyses): the distortion
+		// materials' screen offsets into a half-resolution buffer that the tonemap pass applies.
+		// After TAA and motion blur, so neither smears the shimmer.
+		RENDER_TIMESTAMP("Distortion");
+		RD::get_singleton()->draw_command_begin_label("Distortion");
+
+		const Size2i distortion_size = (rb->get_internal_size() + Size2i(1, 1)) / 2;
+		if (!rb->has_texture(SNAME("distortion"), SNAME("buffer"))) {
+			rb->create_texture(SNAME("distortion"), SNAME("buffer"), RD::DATA_FORMAT_R16G16B16A16_SFLOAT, RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_COLOR_ATTACHMENT_BIT, RD::TEXTURE_SAMPLES_1, distortion_size, 1, 1, true, true);
+		}
+		RID distortion_fb = FramebufferCacheRD::get_singleton()->get_cache(rb->get_texture(SNAME("distortion"), SNAME("buffer")));
+
+		// SCREEN_UV spans the half-resolution target; VIEWPORT_SIZE stays the viewport's.
+		uint32_t distortion_uniform_buffer_index = _setup_environment(p_render_data, is_reflection_probe, distortion_size, screen_size, p_default_bg_color, false);
+		// No depth attachment: the pass tests against the scene's (resolved) depth, now free to read.
+		RID distortion_uniform_set = _setup_render_pass_uniform_set(RENDER_LIST_ALPHA, p_render_data, false, radiance_texture, samplers, distortion_uniform_buffer_index, true, rb->get_depth_texture());
+		RenderListParameters render_list_params(render_list[RENDER_LIST_ALPHA].elements.ptr(), render_list[RENDER_LIST_ALPHA].element_info.ptr(), render_list[RENDER_LIST_ALPHA].elements.size(), reverse_cull, PASS_MODE_COLOR, COLOR_PASS_FLAG_DISTORTION, false, p_render_data->directional_light_soft_shadows, distortion_uniform_set, false, Vector2(), p_render_data->scene_data->lod_distance_multiplier, p_render_data->scene_data->screen_mesh_lod_threshold, 1, 0, base_specialization, true);
+		_render_list_with_draw_list(&render_list_params, distortion_fb, RD::DRAW_CLEAR_COLOR_0, Vector<Color>({ Color(0, 0, 0, 0) }), 0.0f, 0u, Rect2());
+
+		RD::get_singleton()->draw_command_end_label();
+		p_render_data->distortion_used = true;
 	}
 
 	if (rb_data.is_valid()) {
@@ -3690,7 +3731,7 @@ void RenderForwardClustered::_update_render_base_uniform_set() {
 	}
 }
 
-RID RenderForwardClustered::_setup_render_pass_uniform_set(RenderListType p_render_list, const RenderDataRD *p_render_data, bool p_is_multiview, RID p_radiance_texture, const RendererRD::MaterialStorage::Samplers &p_samplers, uint32_t p_uniform_buffer_index, bool p_use_directional_shadow_atlas) {
+RID RenderForwardClustered::_setup_render_pass_uniform_set(RenderListType p_render_list, const RenderDataRD *p_render_data, bool p_is_multiview, RID p_radiance_texture, const RendererRD::MaterialStorage::Samplers &p_samplers, uint32_t p_uniform_buffer_index, bool p_use_directional_shadow_atlas, RID p_depth_texture) {
 	RendererRD::TextureStorage *texture_storage = RendererRD::TextureStorage::get_singleton();
 	RendererRD::LightStorage *light_storage = RendererRD::LightStorage::get_singleton();
 
@@ -3931,7 +3972,9 @@ RID RenderForwardClustered::_setup_render_pass_uniform_set(RenderListType p_rend
 		u.binding = 24;
 		u.uniform_type = RD::UNIFORM_TYPE_TEXTURE;
 		RID texture;
-		if (rb.is_valid() && rb->has_texture(RB_SCOPE_BUFFERS, RB_TEX_BACK_DEPTH)) {
+		if (p_depth_texture.is_valid()) {
+			texture = p_depth_texture; // The distortion pass reads the scene's depth itself, no copy needed.
+		} else if (rb.is_valid() && rb->has_texture(RB_SCOPE_BUFFERS, RB_TEX_BACK_DEPTH)) {
 			texture = rb->get_texture(RB_SCOPE_BUFFERS, RB_TEX_BACK_DEPTH);
 		} else {
 			texture = texture_storage->texture_rd_get_default(is_multiview ? RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_2D_ARRAY_DEPTH : RendererRD::TextureStorage::DEFAULT_RD_TEXTURE_DEPTH);
@@ -4561,7 +4604,10 @@ void RenderForwardClustered::_geometry_instance_add_surface_with_material(Geomet
 		flags |= GeometryInstanceSurfaceDataCache::FLAG_USES_STENCIL;
 	}
 
-	if (p_material->shader_data->uses_alpha_pass()) {
+	if (p_material->shader_data->uses_distortion) {
+		// No depth, no shadow, no opaque or transparent color: only the distortion pass.
+		flags |= GeometryInstanceSurfaceDataCache::FLAG_PASS_DISTORTION;
+	} else if (p_material->shader_data->uses_alpha_pass()) {
 		flags |= GeometryInstanceSurfaceDataCache::FLAG_PASS_ALPHA;
 		if (p_material->shader_data->uses_depth_in_alpha_pass()) {
 			flags |= GeometryInstanceSurfaceDataCache::FLAG_PASS_DEPTH;
@@ -5019,6 +5065,18 @@ static RD::FramebufferFormatID _get_shadow_atlas_framebuffer_format_for_pipeline
 	return RD::get_singleton()->framebuffer_format_create(Vector<RD::AttachmentFormat>(attachments));
 }
 
+static RD::FramebufferFormatID _get_distortion_framebuffer_format_for_pipeline() {
+	thread_local LocalVector<RD::AttachmentFormat> attachments;
+	attachments.clear();
+
+	RD::AttachmentFormat attachment;
+	attachment.format = RD::DATA_FORMAT_R16G16B16A16_SFLOAT;
+	attachment.usage_flags = RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_COLOR_ATTACHMENT_BIT;
+	attachments.push_back(attachment);
+
+	return RD::get_singleton()->framebuffer_format_create(Vector<RD::AttachmentFormat>(attachments));
+}
+
 static RD::FramebufferFormatID _get_reflection_probe_depth_framebuffer_format_for_pipeline() {
 	thread_local LocalVector<RD::AttachmentFormat> attachments;
 	attachments.clear();
@@ -5048,6 +5106,19 @@ void RenderForwardClustered::_mesh_compile_pipeline_for_surface(SceneShaderForwa
 
 void RenderForwardClustered::_mesh_compile_pipelines_for_surface(const SurfacePipelineData &p_surface, const GlobalPipelineData &p_global, RSE::PipelineSource p_source, Vector<ShaderPipelinePair> *r_pipeline_pairs) {
 	RendererRD::MeshStorage *mesh_storage = RendererRD::MeshStorage::get_singleton();
+	if (p_surface.uses_distortion) {
+		// Distortion materials draw only in the distortion pass.
+		SceneShaderForwardClustered::ShaderData::PipelineKey distortion_key;
+		distortion_key.cull_mode = RD::POLYGON_CULL_DISABLED;
+		distortion_key.primitive_type = mesh_storage->mesh_surface_get_primitive(p_surface.mesh_surface);
+		distortion_key.wireframe = false;
+		distortion_key.version = SceneShaderForwardClustered::PIPELINE_VERSION_DISTORTION_PASS;
+		distortion_key.color_pass_flags = 0;
+		distortion_key.framebuffer_format_id = _get_distortion_framebuffer_format_for_pipeline();
+		_mesh_compile_pipeline_for_surface(p_surface.shader, p_surface.mesh_surface, true, p_surface.instanced, p_source, distortion_key, r_pipeline_pairs);
+		return;
+	}
+
 	bool octmap_use_storage = !copy_effects->get_raster_effects().has_flag(RendererRD::CopyEffects::RASTER_EFFECT_OCTMAP);
 
 	// Retrieve from the scene shader which groups are currently enabled.
@@ -5207,6 +5278,7 @@ void RenderForwardClustered::_mesh_generate_all_pipelines_for_surface_cache(Geom
 	surface.uses_transparent = uses_alpha_pass || uses_fade;
 	surface.uses_depth = (p_surface_cache->flags & (GeometryInstanceSurfaceDataCache::FLAG_PASS_DEPTH | GeometryInstanceSurfaceDataCache::FLAG_PASS_OPAQUE | GeometryInstanceSurfaceDataCache::FLAG_PASS_SHADOW)) != 0;
 	surface.can_use_lightmap = p_surface_cache->owner->lightmap_instance.is_valid() || p_surface_cache->owner->lightmap_sh;
+	surface.uses_distortion = (p_surface_cache->flags & GeometryInstanceSurfaceDataCache::FLAG_PASS_DISTORTION) != 0;
 	_mesh_compile_pipelines_for_surface(surface, p_global, RSE::PIPELINE_SOURCE_SURFACE);
 }
 
@@ -5397,6 +5469,7 @@ void RenderForwardClustered::mesh_generate_pipelines(RID p_mesh, bool p_backgrou
 		surface.uses_transparent = material->shader_data->uses_alpha_pass();
 		surface.uses_depth = surface.uses_opaque || (surface.uses_transparent && material->shader_data->uses_depth_in_alpha_pass());
 		surface.can_use_lightmap = mesh_storage->mesh_surface_get_format(mesh_surface) & RSE::ARRAY_FORMAT_TEX_UV2;
+		surface.uses_distortion = material->shader_data->uses_distortion;
 		_mesh_compile_pipelines_for_surface(surface, global_pipeline_data_required, RSE::PIPELINE_SOURCE_MESH, &pipeline_pairs);
 	}
 

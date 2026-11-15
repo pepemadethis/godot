@@ -794,6 +794,12 @@ void RendererSceneRenderRD::_render_buffers_post_process_and_tonemap(const Rende
 			tonemap.film_grain_size = RSG::camera_attributes->camera_attributes_get_film_grain_size(attributes);
 		}
 
+		if (can_use_effects && p_render_data->distortion_used && rb->has_texture(SNAME("distortion"), SNAME("buffer"))) {
+			tonemap.use_distortion = true;
+			tonemap.distortion_texture = rb->get_texture(SNAME("distortion"), SNAME("buffer"));
+			tonemap.distortion_depth_texture = rb->get_depth_texture(); // Resolved when MSAA is on.
+		}
+
 		RID dest_fb;
 		RD::DataFormat dest_fb_format;
 		if (using_scaling_pass || use_smaa) {

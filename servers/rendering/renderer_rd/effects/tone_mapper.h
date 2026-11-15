@@ -78,6 +78,7 @@ private:
 		TONEMAP_FLAG_USE_VIGNETTE = (1 << 7),
 		TONEMAP_FLAG_USE_CHROMATIC_ABERRATION = (1 << 8),
 		TONEMAP_FLAG_USE_FILM_GRAIN = (1 << 9),
+		TONEMAP_FLAG_USE_DISTORTION = (1 << 10),
 	};
 
 	enum FlagsMobile {
@@ -214,6 +215,10 @@ public:
 		bool use_film_grain = false;
 		float film_grain_amount = 0.3;
 		float film_grain_size = 1.0; // In pixels at 1080p.
+
+		bool use_distortion = false; // Single view only.
+		RID distortion_texture; // Offsets (RG) and the nearest distortion surface's depth (A).
+		RID distortion_depth_texture; // The scene's depth the distortion pass tested against.
 
 		bool use_fxaa = false;
 		enum DebandingMode {

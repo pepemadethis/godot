@@ -178,7 +178,7 @@ private:
 
 	void _update_render_base_uniform_set();
 	RID _setup_sdfgi_render_pass_uniform_set(RID p_albedo_texture, RID p_emission_texture, RID p_emission_aniso_texture, RID p_geom_facing_texture, const RendererRD::MaterialStorage::Samplers &p_samplers, uint32_t p_uniform_buffer_index);
-	RID _setup_render_pass_uniform_set(RenderListType p_render_list, const RenderDataRD *p_render_data, bool p_is_multiview, RID p_radiance_texture, const RendererRD::MaterialStorage::Samplers &p_samplers, uint32_t p_uniform_buffer_index, bool p_use_directional_shadow_atlas = false);
+	RID _setup_render_pass_uniform_set(RenderListType p_render_list, const RenderDataRD *p_render_data, bool p_is_multiview, RID p_radiance_texture, const RendererRD::MaterialStorage::Samplers &p_samplers, uint32_t p_uniform_buffer_index, bool p_use_directional_shadow_atlas = false, RID p_depth_texture = RID());
 
 	struct BestFitNormal {
 		BestFitNormalShaderRD shader;
@@ -216,6 +216,7 @@ private:
 		COLOR_PASS_FLAG_SEPARATE_SPECULAR = 1 << 1,
 		COLOR_PASS_FLAG_MULTIVIEW = 1 << 2,
 		COLOR_PASS_FLAG_MOTION_VECTORS = 1 << 3,
+		COLOR_PASS_FLAG_DISTORTION = 1 << 4, // Only distortion materials, into the distortion buffer.
 	};
 
 	struct GeometryInstanceSurfaceDataCache;
@@ -438,6 +439,7 @@ private:
 		bool used_screen_texture = false;
 		bool used_normal_texture = false;
 		bool used_depth_texture = false;
+		bool used_distortion = false;
 		bool used_sss = false;
 		bool used_lightmap = false;
 		bool used_opaque_stencil = false;
@@ -527,6 +529,7 @@ private:
 			FLAG_USES_PARTICLE_TRAILS = 65536,
 			FLAG_USES_MOTION_VECTOR = 131072,
 			FLAG_USES_STENCIL = 262144,
+			FLAG_PASS_DISTORTION = 524288, // Drawn only in the distortion pass.
 		};
 
 		union {
@@ -656,6 +659,7 @@ private:
 		bool uses_transparent = false;
 		bool uses_depth = false;
 		bool can_use_lightmap = false;
+		bool uses_distortion = false;
 	};
 
 	struct GlobalPipelineData {

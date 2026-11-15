@@ -2367,9 +2367,17 @@ void main() {
 		model_normal_matrix = mat3(model_matrix);
 	}
 
+#ifdef DISTORTION_USED
+	vec2 distortion_output = vec2(0.0); // The distortion buffer is Forward+ only.
+#endif
+
 	{
 #CODE : FRAGMENT
 	}
+
+#ifdef DISTORTION_USED
+	discard;
+#endif
 
 	// Keep albedo values in positive number range as negative values "wraparound" into positive numbers resulting in wrong colors
 	albedo = max(albedo, vec3(0.0));

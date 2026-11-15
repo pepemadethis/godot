@@ -1241,9 +1241,17 @@ void main() {
 #endif
 #endif
 
+#ifdef DISTORTION_USED
+	vec2 distortion_output = vec2(0.0); // The distortion buffer is Forward+ only.
+#endif
+
 	{
 #CODE : FRAGMENT
 	}
+
+#ifdef DISTORTION_USED
+	discard;
+#endif
 
 	// Store variables in half precision after user shader code is run.
 	hvec3 view = hvec3(view_highp);

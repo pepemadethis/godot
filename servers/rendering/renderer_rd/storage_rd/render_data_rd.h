@@ -81,6 +81,7 @@ public:
 
 	/* Viewport data */
 	bool transparent_bg = false;
+	bool distortion_used = false; // Forward+ drew distortion materials into the "distortion" buffer.
 	Rect2i render_region;
 
 	/* Shadow data */

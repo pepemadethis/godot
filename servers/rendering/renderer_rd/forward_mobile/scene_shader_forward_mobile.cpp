@@ -689,6 +689,7 @@ void SceneShaderForwardMobile::init(const String p_defines) {
 		actions.renames["BENT_NORMAL_MAP"] = "bent_normal_map_highp";
 		actions.renames["ALBEDO"] = "albedo_highp";
 		actions.renames["ALPHA"] = "alpha_highp";
+		actions.renames["DISTORTION"] = "distortion_output";
 		actions.renames["PREMUL_ALPHA_FACTOR"] = "premul_alpha_highp";
 		actions.renames["METALLIC"] = "metallic_highp";
 		actions.renames["SPECULAR"] = "specular_highp";
@@ -769,6 +770,7 @@ void SceneShaderForwardMobile::init(const String p_defines) {
 		actions.usage_defines["NORMAL_MAP"] = "#define NORMAL_MAP_USED\n";
 		actions.usage_defines["NORMAL_MAP_DEPTH"] = "@NORMAL_MAP";
 		actions.usage_defines["BENT_NORMAL_MAP"] = "#define BENT_NORMAL_MAP_USED\n";
+		actions.usage_defines["DISTORTION"] = "#define DISTORTION_USED\n";
 		actions.usage_defines["COLOR"] = "#define COLOR_USED\n";
 		actions.usage_defines["INSTANCE_CUSTOM"] = "#define ENABLE_INSTANCE_CUSTOM\n";
 		actions.usage_defines["POSITION"] = "#define OVERRIDE_POSITION\n";

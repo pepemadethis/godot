@@ -83,6 +83,7 @@ void SceneShaderForwardClustered::ShaderData::set_code(const String &p_code) {
 	uses_world_coordinates = false;
 	uses_particle_trails = false;
 	uses_z_clip_scale = false;
+	uses_distortion = false;
 
 	int depth_drawi = DEPTH_DRAW_OPAQUE;
 
@@ -133,6 +134,7 @@ void SceneShaderForwardClustered::ShaderData::set_code(const String &p_code) {
 	actions.usage_flag_pointers["SSS_TRANSMITTANCE_DEPTH"] = &uses_transmittance;
 
 	actions.usage_flag_pointers["DISCARD"] = &uses_discard;
+	actions.usage_flag_pointers["DISTORTION"] = &uses_distortion;
 	actions.usage_flag_pointers["TIME"] = &uses_time;
 	actions.usage_flag_pointers["ROUGHNESS"] = &uses_roughness;
 	actions.usage_flag_pointers["NORMAL"] = &uses_normal;
@@ -252,6 +254,10 @@ bool SceneShaderForwardClustered::ShaderData::is_animated() const {
 }
 
 bool SceneShaderForwardClustered::ShaderData::casts_shadows() const {
+	if (uses_distortion) {
+		return false; // Distortion materials draw nothing visible.
+	}
+
 	bool has_read_screen_alpha = uses_screen_texture || uses_depth_texture || uses_normal_texture;
 	bool has_base_alpha = (uses_alpha && (!uses_alpha_clip || uses_alpha_antialiasing)) || has_read_screen_alpha;
 	bool has_alpha = has_base_alpha || uses_blend_alpha;
@@ -321,6 +327,9 @@ uint16_t SceneShaderForwardClustered::ShaderData::_get_shader_version(PipelineVe
 
 			return ShaderVersion::SHADER_VERSION_COLOR_PASS * 2 + shader_flags;
 		} break;
+		case PIPELINE_VERSION_DISTORTION_PASS:
+			// The plain color pass shader: DISTORTION_USED makes it write the offset and stop.
+			return ShaderVersion::SHADER_VERSION_COLOR_PASS * 2 + (p_ubershader ? SHADER_COLOR_PASS_FLAG_UBERSHADER : 0);
 		default: {
 			DEV_ASSERT(false && "Unknown pipeline version.");
 			return 0;
@@ -478,6 +487,21 @@ void SceneShaderForwardClustered::ShaderData::_create_pipeline(PipelineKey p_pip
 			default:
 				break;
 		}
+	}
+
+	if (p_pipeline_key.version == PIPELINE_VERSION_DISTORTION_PASS) {
+		// Offsets add up (RG); A keeps the nearest distortion surface's depth (reversed, so the
+		// largest). No depth attachment: the shader tests against the scene's depth itself.
+		RD::PipelineColorBlendState::Attachment distortion_attachment;
+		distortion_attachment.enable_blend = true;
+		distortion_attachment.src_color_blend_factor = RD::BLEND_FACTOR_ONE;
+		distortion_attachment.dst_color_blend_factor = RD::BLEND_FACTOR_ONE;
+		distortion_attachment.color_blend_op = RD::BLEND_OP_ADD;
+		distortion_attachment.src_alpha_blend_factor = RD::BLEND_FACTOR_ONE;
+		distortion_attachment.dst_alpha_blend_factor = RD::BLEND_FACTOR_ONE;
+		distortion_attachment.alpha_blend_op = RD::BLEND_OP_MAXIMUM;
+		blend_state.attachments = { distortion_attachment };
+		depth_stencil_state = RD::PipelineDepthStencilState();
 	}
 
 	// Convert the specialization from the key to pipeline specialization constants.
@@ -754,6 +778,7 @@ void SceneShaderForwardClustered::init(const String p_defines) {
 		actions.renames["BENT_NORMAL_MAP"] = "bent_normal_map";
 		actions.renames["ALBEDO"] = "albedo_highp";
 		actions.renames["ALPHA"] = "alpha_highp";
+		actions.renames["DISTORTION"] = "distortion_highp";
 		actions.renames["PREMUL_ALPHA_FACTOR"] = "premul_alpha";
 		actions.renames["METALLIC"] = "metallic_highp";
 		actions.renames["SPECULAR"] = "specular";
@@ -834,6 +859,7 @@ void SceneShaderForwardClustered::init(const String p_defines) {
 		actions.usage_defines["NORMAL_MAP"] = "#define NORMAL_MAP_USED\n";
 		actions.usage_defines["NORMAL_MAP_DEPTH"] = "@NORMAL_MAP";
 		actions.usage_defines["BENT_NORMAL_MAP"] = "#define BENT_NORMAL_MAP_USED\n";
+		actions.usage_defines["DISTORTION"] = "#define DISTORTION_USED\n";
 		actions.usage_defines["COLOR"] = "#define COLOR_USED\n";
 		actions.usage_defines["INSTANCE_CUSTOM"] = "#define ENABLE_INSTANCE_CUSTOM\n";
 		actions.usage_defines["POSITION"] = "#define OVERRIDE_POSITION\n";

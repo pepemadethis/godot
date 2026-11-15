@@ -1314,6 +1314,7 @@ MaterialStorage::MaterialStorage() {
 		actions.renames["BENT_NORMAL_MAP"] = "bent_normal_map";
 		actions.renames["ALBEDO"] = "albedo";
 		actions.renames["ALPHA"] = "alpha";
+		actions.renames["DISTORTION"] = "distortion_output";
 		actions.renames["PREMUL_ALPHA_FACTOR"] = "premul_alpha";
 		actions.renames["METALLIC"] = "metallic";
 		actions.renames["SPECULAR"] = "specular";
@@ -1395,6 +1396,7 @@ MaterialStorage::MaterialStorage() {
 		actions.usage_defines["NORMAL_MAP"] = "#define NORMAL_MAP_USED\n";
 		actions.usage_defines["NORMAL_MAP_DEPTH"] = "@NORMAL_MAP";
 		actions.usage_defines["BENT_NORMAL_MAP"] = "#define BENT_NORMAL_MAP_USED\n";
+		actions.usage_defines["DISTORTION"] = "#define DISTORTION_USED\n";
 		actions.usage_defines["COLOR"] = "#define COLOR_USED\n";
 		actions.usage_defines["INSTANCE_CUSTOM"] = "#define ENABLE_INSTANCE_CUSTOM\n";
 		actions.usage_defines["POSITION"] = "#define OVERRIDE_POSITION\n";

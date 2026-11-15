@@ -1312,9 +1312,30 @@ void fragment_shader(in SceneData scene_data) {
 #endif
 #endif
 
+#ifdef DISTORTION_USED
+	vec2 distortion_highp = vec2(0.0);
+#endif
+
 	{
 #CODE : FRAGMENT
 	}
+
+#ifdef DISTORTION_USED
+#if defined(MODE_RENDER_DEPTH) || defined(MODE_SEPARATE_SPECULAR) || defined(MODE_RENDER_MATERIAL) || defined(USE_MULTIVIEW)
+	discard; // Distortion materials draw only in the (single view) distortion pass.
+#else
+	{
+		// The distortion pass has no depth attachment: test against the scene's depth here.
+		float scene_depth = textureLod(sampler2D(depth_buffer, SAMPLER_NEAREST_CLAMP), screen_uv, 0.0).r;
+		if (gl_FragCoord.z < scene_depth) {
+			discard; // Reversed depth: behind an opaque surface.
+		}
+		// RG: the offset in screen UV units, faded by ALPHA; A: this surface's depth.
+		frag_color = vec4(distortion_highp * alpha_highp, 0.0, gl_FragCoord.z);
+		return;
+	}
+#endif
+#endif // DISTORTION_USED
 
 	float roughness = roughness_highp;
 	float metallic = metallic_highp;

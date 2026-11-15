@@ -85,6 +85,7 @@ public:
 		PIPELINE_VERSION_DEPTH_PASS_WITH_NORMAL_AND_ROUGHNESS_MULTIVIEW,
 		PIPELINE_VERSION_DEPTH_PASS_WITH_NORMAL_AND_ROUGHNESS_AND_VOXEL_GI_MULTIVIEW,
 		PIPELINE_VERSION_COLOR_PASS,
+		PIPELINE_VERSION_DISTORTION_PASS, // The color pass shader, into the distortion buffer.
 		PIPELINE_VERSION_MAX
 	};
 
@@ -271,6 +272,7 @@ public:
 		bool uses_world_coordinates = false;
 		bool uses_screen_texture_mipmaps = false;
 		bool uses_z_clip_scale = false;
+		bool uses_distortion = false; // Writes DISTORTION: drawn only into the distortion buffer.
 		RSE::CullMode cull_mode = RSE::CULL_MODE_DISABLED;
 
 		bool stencil_enabled = false;

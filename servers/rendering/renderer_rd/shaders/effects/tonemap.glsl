@@ -48,6 +48,12 @@ layout(set = 0, binding = 0) uniform SAMPLER_FORMAT source_color;
 layout(set = 1, binding = 0) uniform sampler2D source_auto_exposure;
 layout(set = 2, binding = 0) uniform SAMPLER_FORMAT source_glow;
 layout(set = 2, binding = 1) uniform sampler2D glow_map; // TODO needs multiview support
+#ifndef USE_MULTIVIEW
+// Heat and space distortion: offsets in screen UV units (RG) and the nearest distortion
+// surface's reversed depth (A), at half resolution; the scene's depth they were tested against.
+layout(set = 2, binding = 2) uniform sampler2D distortion_buffer;
+layout(set = 2, binding = 3) uniform sampler2D distortion_depth;
+#endif
 
 #ifdef USE_1D_LUT
 layout(set = 3, binding = 0) uniform sampler2D source_color_correction;
@@ -65,6 +71,7 @@ layout(set = 3, binding = 0) uniform sampler3D source_color_correction;
 #define FLAG_USE_VIGNETTE (1 << 7)
 #define FLAG_USE_CHROMATIC_ABERRATION (1 << 8)
 #define FLAG_USE_FILM_GRAIN (1 << 9)
+#define FLAG_USE_DISTORTION (1 << 10)
 
 layout(push_constant, std430) uniform Params {
 	vec3 bcs;
@@ -937,16 +944,39 @@ float film_grain(vec2 frag_coord, float size) {
 	return dot(weights, values) / sqrt(dot(weights, weights));
 }
 
+#ifndef USE_MULTIVIEW
+// Where to read the picture for this pixel: shifted by the distortion materials in front of
+// what is seen, but never moving a pixel nearer than them, nor pulling a nearer one in.
+vec2 distorted_uv(vec2 uv) {
+	vec2 offset = textureLod(distortion_buffer, uv, 0.0).xy;
+	// The nearest distortion surface around this pixel (A was blended with max, so not filtered).
+	vec4 depths = textureGather(distortion_buffer, uv, 3);
+	float surface_depth = max(max(depths.x, depths.y), max(depths.z, depths.w));
+	if (surface_depth <= 0.0 || textureLod(distortion_depth, uv, 0.0).r > surface_depth) {
+		return uv; // Nothing distorts here, or this pixel is in front of the distortion.
+	}
+	vec2 shifted = clamp(uv + offset, vec2(0.0), vec2(1.0));
+	if (textureLod(distortion_depth, shifted, 0.0).r > surface_depth) {
+		return uv; // The shifted read would land on something in front of the distortion.
+	}
+	return shifted;
+}
+#endif
+
 void main() {
+	vec2 uv = uv_interp; // Where the picture is read (moved by distortion).
 #ifdef USE_MULTIVIEW
-	vec4 color = textureLod(source_color, vec3(uv_interp, ViewIndex), 0.0f);
+	vec4 color = textureLod(source_color, vec3(uv, ViewIndex), 0.0f);
 #else
-	vec4 color = textureLod(source_color, uv_interp, 0.0f);
+	if (bool(params.flags & FLAG_USE_DISTORTION)) {
+		uv = distorted_uv(uv_interp);
+	}
+	vec4 color = textureLod(source_color, uv, 0.0f);
 #endif
 	// What chromatic aberration changes, before scaling.
 	vec3 aberration = vec3(0.0);
 	if (bool(params.flags & FLAG_USE_CHROMATIC_ABERRATION)) {
-		aberration = chromatic_aberration(uv_interp) - color.rgb;
+		aberration = chromatic_aberration(uv) - color.rgb;
 	}
 
 	color.rgb *= params.luminance_multiplier;
@@ -964,7 +994,7 @@ void main() {
 	// Single-pass FXAA and pre-tonemap glow.
 	if (bool(params.flags & FLAG_USE_FXAA)) {
 		// FXAA must be performed before glow to preserve the "bleed" effect of glow.
-		color.rgb = do_fxaa(color.rgb, exposure, uv_interp);
+		color.rgb = do_fxaa(color.rgb, exposure, uv);
 	}
 
 	if (bool(params.flags & FLAG_USE_CHROMATIC_ABERRATION)) {

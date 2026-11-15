@@ -398,6 +398,7 @@ public:
 
 	void copy_cubemap_to_dp(RID p_source_rd_texture, RID p_dst_framebuffer, const Rect2 &p_rect, const Vector2 &p_dst_size, float p_z_near, float p_z_far, bool p_dp_flip, bool p_merge = false);
 	void copy_shadow_atlas_rect(RID p_source_depth, RID p_dst_framebuffer, const Rect2i &p_rect);
+	void copy_shadow_atlas_tiles(RID p_source_depth, RID p_dst_framebuffer, const Rect2i &p_rect, const uint16_t *p_tiles, int p_tile_count);
 	void copy_cubemap_to_octmap(RID p_source_rd_texture, RID p_dst_framebuffer, float p_border_size);
 	void octmap_downsample(RID p_source_octmap, RID p_dest_octmap, const Size2i &p_size, float p_border_size);
 	void octmap_downsample_raster(RID p_source_octmap, RID p_dest_framebuffer, const Size2i &p_size, float p_border_size);

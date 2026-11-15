@@ -2677,6 +2677,42 @@ bool RendererSceneCull::_instance_is_shadow_dynamic_by_nature(const Instance *p_
 	return static_cast<const InstanceGeometryData *>(p_instance->base_data)->material_is_animated;
 }
 
+void RendererSceneCull::_directional_cascade_mark_tiles(const Transform3D &p_cascade_transform, const Vector2 &p_cascade_uv_scale, const InstanceBounds &p_bounds, const Instance *p_instance, uint16_t *r_tiles) {
+	const int tiles = RendererSceneRender::RenderShadowData::STATIC_CACHE_TILES;
+	// A rigid or skinned mesh draws inside its bounds. Particles, blend shapes and animated materials
+	// are not held by theirs as surely: the whole region.
+	const InstanceGeometryData *geom = static_cast<const InstanceGeometryData *>(p_instance->base_data);
+	if (p_instance->base_type == RSE::INSTANCE_PARTICLES || geom->material_is_animated || (p_instance->base_type == RSE::INSTANCE_MESH && p_instance->mesh_instance.is_valid() && RSG::mesh_storage->mesh_get_blend_shape_count(p_instance->base) > 0)) {
+		for (int i = 0; i < tiles; i++) {
+			r_tiles[i] = 0xFFFF;
+		}
+		return;
+	}
+	// The cascade's region maps its box, centred on the cascade's transform, to 0..1 across and up.
+	const Vector3 x_axis = p_cascade_transform.basis.get_column(Vector3::AXIS_X);
+	const Vector3 y_axis = p_cascade_transform.basis.get_column(Vector3::AXIS_Y);
+	real_t u_min = 1e20, u_max = -1e20, v_min = 1e20, v_max = -1e20;
+	for (int i = 0; i < 8; i++) {
+		const Vector3 p = Vector3(p_bounds.bounds[(i & 1) ? 3 : 0], p_bounds.bounds[(i & 2) ? 4 : 1], p_bounds.bounds[(i & 4) ? 5 : 2]) - p_cascade_transform.origin;
+		const real_t u = x_axis.dot(p) * p_cascade_uv_scale.x + 0.5;
+		const real_t v = y_axis.dot(p) * p_cascade_uv_scale.y + 0.5;
+		u_min = MIN(u_min, u);
+		u_max = MAX(u_max, u);
+		v_min = MIN(v_min, v);
+		v_max = MAX(v_max, v);
+	}
+	// A little wider than the bounds, for the rasterizer's rounding.
+	const real_t pad = 1.0 / 256.0;
+	const int x0 = CLAMP(int(Math::floor((u_min - pad) * tiles)), 0, tiles - 1);
+	const int x1 = CLAMP(int(Math::floor((u_max + pad) * tiles)), 0, tiles - 1);
+	const int y0 = CLAMP(int(Math::floor((v_min - pad) * tiles)), 0, tiles - 1);
+	const int y1 = CLAMP(int(Math::floor((v_max + pad) * tiles)), 0, tiles - 1);
+	const uint16_t row = uint16_t(((1u << (x1 - x0 + 1)) - 1u) << x0);
+	for (int y = y0; y <= y1; y++) {
+		r_tiles[y] |= row;
+	}
+}
+
 void RendererSceneCull::_shadow_static_change(Instance *p_instance, const AABB &p_aabb) {
 	if (p_instance->scenario) {
 		p_instance->scenario->push_shadow_static_change(p_aabb);
@@ -3650,6 +3686,7 @@ void RendererSceneCull::_scene_cull(CullData &cull_data, InstanceCullResult &cul
 										continue;
 									}
 									cull_result.directional_shadows[j].cascade_dynamic_instances[k].push_back(idata.instance_geometry);
+									_directional_cascade_mark_tiles(cull_data.cull->shadows[j].cascades[k].transform, cull_data.cull->shadows[j].cascades[k].uv_scale, cull_data.scenario->instance_aabbs[i], idata.instance, cull_result.directional_shadows[j].cascade_dynamic_tiles[k]);
 								} else if (cache_mode == RendererSceneRender::SHADOW_STATIC_CACHE_REBUILD) {
 									cull_result.directional_shadows[j].cascade_geometry_instances[k].push_back(idata.instance_geometry);
 								}
@@ -3900,14 +3937,37 @@ void RendererSceneCull::_render_scene(const RendererSceneRender::CameraData *p_c
 					continue;
 				}
 				RendererSceneRender::ShadowStaticCacheMode static_cache_mode = c.static_cache_mode;
+				const int tiles = RendererSceneRender::RenderShadowData::STATIC_CACHE_TILES;
+				uint16_t *restore_tiles = render_shadow_data[max_shadows_used].static_cache_restore_tiles;
+				for (int t = 0; t < tiles; t++) {
+					restore_tiles[t] = 0xFFFF; // The whole region.
+				}
 				if (c.cache) {
-					// The view keeps its own atlas between frames. A cascade's region that already holds the
-					// cache as it is now, with nothing drawn over it, is not drawn again while nothing moves.
+					// The view keeps its own atlas between frames. While it holds this cascade's cache as it is
+					// now, only the tiles the moving casters were last drawn into need restoring before they are
+					// drawn again; with none of those and nothing moving, the cascade is not drawn at all.
+					InstanceLightData::DirectionalCascadeCache &cc = *c.cache;
 					const bool nothing_moves = scene_cull_result.directional_shadows[i].cascade_dynamic_instances[j].size() == 0;
-					if (static_cache_mode == RendererSceneRender::SHADOW_STATIC_CACHE_REUSE && nothing_moves && c.cache->atlas_version == c.cache->cached_version) {
-						static_cache_mode = RendererSceneRender::SHADOW_STATIC_CACHE_KEEP;
+					if (static_cache_mode == RendererSceneRender::SHADOW_STATIC_CACHE_REUSE && cc.atlas_version == cc.cached_version) {
+						bool clean = true;
+						for (int t = 0; t < tiles; t++) {
+							clean = clean && cc.atlas_tiles[t] == 0;
+						}
+						// Now and then the whole region instead, each cascade in a frame of its own.
+						const uint64_t turn = Engine::get_singleton()->get_frames_drawn() + (uint64_t(MAX(cull.static_cache_slot, 0)) * RendererSceneRender::MAX_DIRECTIONAL_LIGHT_CASCADES + j) * 4 + i;
+						if (clean || turn % DIRECTIONAL_CACHE_FULL_RESTORE_FRAMES != 0) {
+							for (int t = 0; t < tiles; t++) {
+								restore_tiles[t] = cc.atlas_tiles[t];
+							}
+							if (clean && nothing_moves) {
+								static_cache_mode = RendererSceneRender::SHADOW_STATIC_CACHE_KEEP;
+							}
+						}
 					}
-					c.cache->atlas_version = nothing_moves ? c.cache->cached_version : 0;
+					cc.atlas_version = cc.cached_version;
+					for (int t = 0; t < tiles; t++) {
+						cc.atlas_tiles[t] = nothing_moves ? 0 : scene_cull_result.directional_shadows[i].cascade_dynamic_tiles[j][t];
+					}
 				}
 				render_shadow_data[max_shadows_used].light = cull.shadows[i].light_instance;
 				render_shadow_data[max_shadows_used].pass = j;

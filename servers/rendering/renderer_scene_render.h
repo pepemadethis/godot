@@ -295,6 +295,12 @@ public:
 		PagedArray<RenderGeometryInstance *> dynamic_instances;
 		ShadowStaticCacheMode static_cache_mode = SHADOW_STATIC_CACHE_NONE;
 		uint32_t static_cache_slot = 0; // Directional lights: which of the views' caches (see RendererLightStorage).
+		// Directional lights with SHADOW_STATIC_CACHE_REUSE: which tiles of the cascade's region of the
+		// atlas to restore from the static cache before `dynamic_instances` are drawn. The region is a
+		// grid of STATIC_CACHE_TILES rows and columns; each row is a mask with one bit per column.
+		// Every bit set restores the whole region.
+		static constexpr int STATIC_CACHE_TILES = 16;
+		uint16_t static_cache_restore_tiles[STATIC_CACHE_TILES];
 	};
 
 	// Whether render_scene() understands RenderShadowData's static cache modes.

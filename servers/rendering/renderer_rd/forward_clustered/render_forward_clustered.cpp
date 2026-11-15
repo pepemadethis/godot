@@ -1731,10 +1731,10 @@ void RenderForwardClustered::_pre_opaque_render(RenderDataRD *p_render_data, boo
 				case SHADOW_STATIC_CACHE_REBUILD: {
 					// The cascade's static casters into the cache, then the cache into the atlas with the moving casters over it.
 					_render_shadow_pass(shadow.light, p_render_data->shadow_atlas, shadow.pass, shadow.instances, lod_distance_multiplier, p_render_data->scene_data->screen_mesh_lod_threshold, false, false, true, p_render_data->render_info, viewport_size, p_render_data->scene_data->cam_transform, SHADOW_DESTINATION_STATIC_CACHE, shadow.static_cache_slot);
-					_render_shadow_pass(shadow.light, p_render_data->shadow_atlas, shadow.pass, shadow.dynamic_instances, lod_distance_multiplier, p_render_data->scene_data->screen_mesh_lod_threshold, false, last, false, p_render_data->render_info, viewport_size, p_render_data->scene_data->cam_transform, SHADOW_DESTINATION_ATLAS_OVER_CACHE, shadow.static_cache_slot);
+					_render_shadow_pass(shadow.light, p_render_data->shadow_atlas, shadow.pass, shadow.dynamic_instances, lod_distance_multiplier, p_render_data->scene_data->screen_mesh_lod_threshold, false, last, false, p_render_data->render_info, viewport_size, p_render_data->scene_data->cam_transform, SHADOW_DESTINATION_ATLAS_OVER_CACHE, shadow.static_cache_slot, shadow.static_cache_restore_tiles);
 				} break;
 				case SHADOW_STATIC_CACHE_REUSE: {
-					_render_shadow_pass(shadow.light, p_render_data->shadow_atlas, shadow.pass, shadow.dynamic_instances, lod_distance_multiplier, p_render_data->scene_data->screen_mesh_lod_threshold, false, last, false, p_render_data->render_info, viewport_size, p_render_data->scene_data->cam_transform, SHADOW_DESTINATION_ATLAS_OVER_CACHE, shadow.static_cache_slot);
+					_render_shadow_pass(shadow.light, p_render_data->shadow_atlas, shadow.pass, shadow.dynamic_instances, lod_distance_multiplier, p_render_data->scene_data->screen_mesh_lod_threshold, false, last, false, p_render_data->render_info, viewport_size, p_render_data->scene_data->cam_transform, SHADOW_DESTINATION_ATLAS_OVER_CACHE, shadow.static_cache_slot, shadow.static_cache_restore_tiles);
 				} break;
 			}
 		}
@@ -2781,7 +2781,7 @@ void RenderForwardClustered::_render_buffers_debug_draw(const RenderDataRD *p_re
 	}
 }
 
-void RenderForwardClustered::_render_shadow_pass(RID p_light, RID p_shadow_atlas, int p_pass, const PagedArray<RenderGeometryInstance *> &p_instances, float p_lod_distance_multiplier, float p_screen_mesh_lod_threshold, bool p_open_pass, bool p_close_pass, bool p_clear_region, RenderingServerTypes::RenderInfo *p_render_info, const Size2i &p_viewport_size, const Transform3D &p_main_cam_transform, ShadowDestination p_destination, uint32_t p_cache_slot) {
+void RenderForwardClustered::_render_shadow_pass(RID p_light, RID p_shadow_atlas, int p_pass, const PagedArray<RenderGeometryInstance *> &p_instances, float p_lod_distance_multiplier, float p_screen_mesh_lod_threshold, bool p_open_pass, bool p_close_pass, bool p_clear_region, RenderingServerTypes::RenderInfo *p_render_info, const Size2i &p_viewport_size, const Transform3D &p_main_cam_transform, ShadowDestination p_destination, uint32_t p_cache_slot, const uint16_t *p_restore_tiles) {
 	RendererRD::LightStorage *light_storage = RendererRD::LightStorage::get_singleton();
 
 	ERR_FAIL_COND(!light_storage->owns_light_instance(p_light));
@@ -3020,7 +3020,20 @@ void RenderForwardClustered::_render_shadow_pass(RID p_light, RID p_shadow_atlas
 			restore.flip_cull = false;
 			restore.uniform_buffer_index = 0;
 			restore.restore_source = static_texture;
-			scene_state.shadow_passes.push_back(restore);
+			// With tiles, only those are restored; the rest of the region already holds the cache.
+			bool restore_any = p_restore_tiles == nullptr;
+			if (p_restore_tiles) {
+				bool restore_all = true;
+				for (int i = 0; i < RenderShadowData::STATIC_CACHE_TILES; i++) {
+					restore.restore_tiles[i] = p_restore_tiles[i];
+					restore_any = restore_any || p_restore_tiles[i] != 0;
+					restore_all = restore_all && p_restore_tiles[i] == 0xFFFF;
+				}
+				restore.restore_partial = !restore_all;
+			}
+			if (restore_any) {
+				scene_state.shadow_passes.push_back(restore);
+			}
 			if (p_instances.size() == 0) {
 				return; // Nothing moving to draw over it.
 			}
@@ -3184,7 +3197,11 @@ void RenderForwardClustered::_render_shadow_end() {
 
 	for (SceneState::ShadowPass &shadow_pass : scene_state.shadow_passes) {
 		if (shadow_pass.restore_source.is_valid()) {
-			copy_effects->copy_shadow_atlas_rect(shadow_pass.restore_source, shadow_pass.framebuffer, shadow_pass.rect);
+			if (shadow_pass.restore_partial) {
+				copy_effects->copy_shadow_atlas_tiles(shadow_pass.restore_source, shadow_pass.framebuffer, shadow_pass.rect, shadow_pass.restore_tiles, RenderShadowData::STATIC_CACHE_TILES);
+			} else {
+				copy_effects->copy_shadow_atlas_rect(shadow_pass.restore_source, shadow_pass.framebuffer, shadow_pass.rect);
+			}
 			continue;
 		}
 		RenderListParameters render_list_parameters(render_list[RENDER_LIST_SECONDARY].elements.ptr() + shadow_pass.element_from, render_list[RENDER_LIST_SECONDARY].element_info.ptr() + shadow_pass.element_from, shadow_pass.element_count, shadow_pass.flip_cull, shadow_pass.pass_mode, 0, true, false, shadow_pass.rp_uniform_set, false, Vector2(), shadow_pass.lod_distance_multiplier, shadow_pass.screen_mesh_lod_threshold, 1, shadow_pass.element_from);

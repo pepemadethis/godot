@@ -1116,6 +1116,61 @@ void CopyEffects::copy_shadow_atlas_rect(RID p_source_depth, RID p_dst_framebuff
 	RD::get_singleton()->draw_list_end();
 }
 
+void CopyEffects::copy_shadow_atlas_tiles(RID p_source_depth, RID p_dst_framebuffer, const Rect2i &p_rect, const uint16_t *p_tiles, int p_tile_count) {
+	// As copy_shadow_atlas_rect(), for the set tiles of a grid of p_tile_count rows and columns over
+	// the rect: each row of p_tiles has one bit per column.
+	ERR_FAIL_COND(p_tile_count < 1 || p_tile_count > 16);
+	UniformSetCacheRD *uniform_set_cache = UniformSetCacheRD::get_singleton();
+	ERR_FAIL_NULL(uniform_set_cache);
+	MaterialStorage *material_storage = MaterialStorage::get_singleton();
+	ERR_FAIL_NULL(material_storage);
+
+	RID nearest_sampler = material_storage->sampler_rd_get_default(RSE::CANVAS_ITEM_TEXTURE_FILTER_NEAREST, RSE::CANVAS_ITEM_TEXTURE_REPEAT_DISABLED);
+	RD::Uniform u_source_depth(RD::UNIFORM_TYPE_SAMPLER_WITH_TEXTURE, 0, Vector<RID>({ nearest_sampler, p_source_depth }));
+
+	RID shader = shadow_atlas_copy.shader.version_get_shader(shadow_atlas_copy.shader_version, 0);
+	ERR_FAIL_COND(shader.is_null());
+
+	uint16_t rows[16];
+	for (int i = 0; i < p_tile_count; i++) {
+		rows[i] = p_tiles[i];
+	}
+
+	RD::DrawListID draw_list = RD::get_singleton()->draw_list_begin(p_dst_framebuffer, RD::DRAW_DEFAULT_ALL, Vector<Color>(), 0.0f, 0, p_rect);
+	RD::get_singleton()->draw_list_bind_render_pipeline(draw_list, shadow_atlas_copy.pipeline.get_render_pipeline(RD::INVALID_ID, RD::get_singleton()->framebuffer_get_format(p_dst_framebuffer)));
+	RD::get_singleton()->draw_list_bind_uniform_set(draw_list, uniform_set_cache->get_cache(shader, 0, u_source_depth), 0);
+	RD::get_singleton()->draw_list_bind_index_array(draw_list, material_storage->get_quad_index_array());
+	// The quad covers the rect; each run of set tiles, grown down over the rows that have it too, is one scissored draw.
+	for (int y = 0; y < p_tile_count; y++) {
+		for (int x = 0; x < p_tile_count; x++) {
+			if (!(rows[y] & (1 << x))) {
+				continue;
+			}
+			int x_end = x;
+			while (x_end + 1 < p_tile_count && (rows[y] & (1 << (x_end + 1)))) {
+				x_end++;
+			}
+			const uint16_t run = uint16_t(((1u << (x_end - x + 1)) - 1u) << x);
+			int y_end = y;
+			while (y_end + 1 < p_tile_count && (rows[y_end + 1] & run) == run) {
+				y_end++;
+			}
+			for (int i = y; i <= y_end; i++) {
+				rows[i] &= ~run;
+			}
+			Rect2i tile_rect;
+			tile_rect.position.x = p_rect.size.x * x / p_tile_count;
+			tile_rect.position.y = p_rect.size.y * y / p_tile_count;
+			tile_rect.size.x = p_rect.size.x * (x_end + 1) / p_tile_count - tile_rect.position.x;
+			tile_rect.size.y = p_rect.size.y * (y_end + 1) / p_tile_count - tile_rect.position.y;
+			RD::get_singleton()->draw_list_enable_scissor(draw_list, tile_rect);
+			RD::get_singleton()->draw_list_draw(draw_list, true);
+			x = x_end;
+		}
+	}
+	RD::get_singleton()->draw_list_end();
+}
+
 void CopyEffects::copy_cubemap_to_dp(RID p_source_rd_texture, RID p_dst_framebuffer, const Rect2 &p_rect, const Vector2 &p_dst_size, float p_z_near, float p_z_far, bool p_dp_flip, bool p_merge) {
 	UniformSetCacheRD *uniform_set_cache = UniformSetCacheRD::get_singleton();
 	ERR_FAIL_NULL(uniform_set_cache);

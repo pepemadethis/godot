@@ -676,6 +676,9 @@ public:
 	void _instance_mark_shadow_changed(Instance *p_instance) const;
 	void _update_shadow_static_casters();
 	static bool _instance_is_shadow_dynamic_by_nature(const Instance *p_instance);
+	// A cascade with moving casters has its whole region restored at least this often, each cascade
+	// in a frame of its own, so a caster that drew outside its bounds cannot leave a mark for long.
+	static constexpr uint64_t DIRECTIONAL_CACHE_FULL_RESTORE_FRAMES = 128;
 
 	struct InstanceGeometryData : public InstanceBaseData {
 		RenderGeometryInstance *geometry_instance = nullptr;
@@ -779,9 +782,12 @@ public:
 			real_t radius = 0; // The camera slice's radius the box was made for.
 			uint64_t version = 1; // Bumped when the cached content becomes stale.
 			uint64_t cached_version = 0; // The version the cache holds.
-			// The cached version the view's own atlas holds for this cascade with nothing drawn over it,
-			// or 0. While it is the cached version and nothing moves, the cascade is not drawn at all.
+			// The cached version the view's own atlas holds for this cascade, or 0. While it is the cached
+			// version, the atlas differs from the cache only in `atlas_tiles`, where moving casters were
+			// last drawn (see RenderShadowData::static_cache_restore_tiles): only those are restored, and
+			// with none and nothing moving the cascade is not drawn at all.
 			uint64_t atlas_version = 0;
+			uint16_t atlas_tiles[RendererSceneRender::RenderShadowData::STATIC_CACHE_TILES] = {};
 			uint64_t generation = 0; // LightStorage::directional_shadow_get_static_generation().
 			uint64_t changes_seen = 0; // Scenario::shadow_static_change_count already checked.
 			// The camera slice's centre in light space last frame, to tell how fast it nears the box's edge.
@@ -997,8 +1003,10 @@ public:
 
 		struct DirectionalShadow {
 			PagedArray<RenderGeometryInstance *> cascade_geometry_instances[RendererSceneRender::MAX_DIRECTIONAL_LIGHT_CASCADES];
-			// Moving casters of cascades that use the static cache.
+			// Moving casters of cascades that use the static cache, and the tiles of each cascade's region
+			// that their bounds cover (see RenderShadowData::static_cache_restore_tiles).
 			PagedArray<RenderGeometryInstance *> cascade_dynamic_instances[RendererSceneRender::MAX_DIRECTIONAL_LIGHT_CASCADES];
+			uint16_t cascade_dynamic_tiles[RendererSceneRender::MAX_DIRECTIONAL_LIGHT_CASCADES][RendererSceneRender::RenderShadowData::STATIC_CACHE_TILES] = {};
 		} directional_shadows[RendererSceneRender::MAX_DIRECTIONAL_LIGHTS];
 
 		PagedArray<RenderGeometryInstance *> sdfgi_region_geometry_instances[SDFGI_MAX_CASCADES * SDFGI_MAX_REGIONS_PER_CASCADE];
@@ -1018,6 +1026,9 @@ public:
 				for (int j = 0; j < RendererSceneRender::MAX_DIRECTIONAL_LIGHT_CASCADES; j++) {
 					directional_shadows[i].cascade_geometry_instances[j].clear();
 					directional_shadows[i].cascade_dynamic_instances[j].clear();
+					for (uint16_t &row : directional_shadows[i].cascade_dynamic_tiles[j]) {
+						row = 0;
+					}
 				}
 			}
 
@@ -1044,6 +1055,9 @@ public:
 				for (int j = 0; j < RendererSceneRender::MAX_DIRECTIONAL_LIGHT_CASCADES; j++) {
 					directional_shadows[i].cascade_geometry_instances[j].reset();
 					directional_shadows[i].cascade_dynamic_instances[j].reset();
+					for (uint16_t &row : directional_shadows[i].cascade_dynamic_tiles[j]) {
+						row = 0;
+					}
 				}
 			}
 
@@ -1071,6 +1085,9 @@ public:
 				for (int j = 0; j < RendererSceneRender::MAX_DIRECTIONAL_LIGHT_CASCADES; j++) {
 					directional_shadows[i].cascade_geometry_instances[j].merge_unordered(p_cull_result.directional_shadows[i].cascade_geometry_instances[j]);
 					directional_shadows[i].cascade_dynamic_instances[j].merge_unordered(p_cull_result.directional_shadows[i].cascade_dynamic_instances[j]);
+					for (int k = 0; k < RendererSceneRender::RenderShadowData::STATIC_CACHE_TILES; k++) {
+						directional_shadows[i].cascade_dynamic_tiles[j][k] |= p_cull_result.directional_shadows[i].cascade_dynamic_tiles[j][k];
+					}
 				}
 			}
 
@@ -1198,6 +1215,7 @@ public:
 	}
 	void _unpair_instance(Instance *p_instance);
 
+	static void _directional_cascade_mark_tiles(const Transform3D &p_cascade_transform, const Vector2 &p_cascade_uv_scale, const InstanceBounds &p_bounds, const Instance *p_instance, uint16_t *r_tiles);
 	void _light_instance_setup_directional_shadow(int p_shadow_index, int p_shadow_count, int p_cache_slot, Instance *p_instance, const Transform3D p_cam_transform, const Projection &p_cam_projection, bool p_cam_orthogonal, bool p_cam_vaspect);
 
 	_FORCE_INLINE_ bool _light_instance_update_shadow(Instance *p_instance, const Transform3D p_cam_transform, const Projection &p_cam_projection, bool p_cam_orthogonal, bool p_cam_vaspect, RID p_shadow_atlas, Scenario *p_scenario, float p_screen_mesh_lod_threshold, uint32_t p_visible_layers = 0xFFFFFF);

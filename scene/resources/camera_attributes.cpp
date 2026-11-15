@@ -94,6 +94,125 @@ float CameraAttributes::get_auto_exposure_scale() const {
 	return auto_exposure_scale;
 }
 
+void CameraAttributes::set_motion_blur_enabled(bool p_enabled) {
+	motion_blur_enabled = p_enabled;
+	_update_motion_blur();
+	notify_property_list_changed();
+}
+
+bool CameraAttributes::is_motion_blur_enabled() const {
+	return motion_blur_enabled;
+}
+
+void CameraAttributes::set_motion_blur_amount(float p_amount) {
+	motion_blur_amount = p_amount;
+	_update_motion_blur();
+}
+
+float CameraAttributes::get_motion_blur_amount() const {
+	return motion_blur_amount;
+}
+
+void CameraAttributes::set_motion_blur_target_fps(float p_target_fps) {
+	motion_blur_target_fps = p_target_fps;
+	_update_motion_blur();
+}
+
+float CameraAttributes::get_motion_blur_target_fps() const {
+	return motion_blur_target_fps;
+}
+
+void CameraAttributes::_update_motion_blur() {
+	RS::get_singleton()->camera_attributes_set_motion_blur(camera_attributes, motion_blur_enabled, motion_blur_amount, motion_blur_target_fps);
+}
+
+void CameraAttributes::set_vignette_enabled(bool p_enabled) {
+	vignette_enabled = p_enabled;
+	_update_vignette();
+	notify_property_list_changed();
+}
+
+bool CameraAttributes::is_vignette_enabled() const {
+	return vignette_enabled;
+}
+
+void CameraAttributes::set_vignette_intensity(float p_intensity) {
+	vignette_intensity = p_intensity;
+	_update_vignette();
+}
+
+float CameraAttributes::get_vignette_intensity() const {
+	return vignette_intensity;
+}
+
+void CameraAttributes::set_vignette_radius(float p_radius) {
+	vignette_radius = p_radius;
+	_update_vignette();
+}
+
+float CameraAttributes::get_vignette_radius() const {
+	return vignette_radius;
+}
+
+void CameraAttributes::_update_vignette() {
+	RS::get_singleton()->camera_attributes_set_vignette(camera_attributes, vignette_enabled, vignette_intensity, vignette_radius);
+}
+
+void CameraAttributes::set_chromatic_aberration_enabled(bool p_enabled) {
+	chromatic_aberration_enabled = p_enabled;
+	_update_chromatic_aberration();
+	notify_property_list_changed();
+}
+
+bool CameraAttributes::is_chromatic_aberration_enabled() const {
+	return chromatic_aberration_enabled;
+}
+
+void CameraAttributes::set_chromatic_aberration_amount(float p_amount) {
+	chromatic_aberration_amount = p_amount;
+	_update_chromatic_aberration();
+}
+
+float CameraAttributes::get_chromatic_aberration_amount() const {
+	return chromatic_aberration_amount;
+}
+
+void CameraAttributes::_update_chromatic_aberration() {
+	RS::get_singleton()->camera_attributes_set_chromatic_aberration(camera_attributes, chromatic_aberration_enabled, chromatic_aberration_amount);
+}
+
+void CameraAttributes::set_film_grain_enabled(bool p_enabled) {
+	film_grain_enabled = p_enabled;
+	_update_film_grain();
+	notify_property_list_changed();
+}
+
+bool CameraAttributes::is_film_grain_enabled() const {
+	return film_grain_enabled;
+}
+
+void CameraAttributes::set_film_grain_amount(float p_amount) {
+	film_grain_amount = p_amount;
+	_update_film_grain();
+}
+
+float CameraAttributes::get_film_grain_amount() const {
+	return film_grain_amount;
+}
+
+void CameraAttributes::set_film_grain_size(float p_size) {
+	film_grain_size = p_size;
+	_update_film_grain();
+}
+
+float CameraAttributes::get_film_grain_size() const {
+	return film_grain_size;
+}
+
+void CameraAttributes::_update_film_grain() {
+	RS::get_singleton()->camera_attributes_set_film_grain(camera_attributes, film_grain_enabled, film_grain_amount, film_grain_size);
+}
+
 RID CameraAttributes::get_rid() const {
 	return camera_attributes;
 }
@@ -108,6 +227,26 @@ void CameraAttributes::_validate_property(PropertyInfo &p_property) const {
 	}
 
 	if (p_property.name.begins_with("auto_exposure_") && p_property.name != "auto_exposure_enabled" && !auto_exposure_enabled) {
+		p_property.usage = PROPERTY_USAGE_NO_EDITOR | PROPERTY_USAGE_INTERNAL;
+		return;
+	}
+
+	if (p_property.name.begins_with("motion_blur_") && p_property.name != "motion_blur_enabled" && !motion_blur_enabled) {
+		p_property.usage = PROPERTY_USAGE_NO_EDITOR | PROPERTY_USAGE_INTERNAL;
+		return;
+	}
+
+	if (p_property.name.begins_with("vignette_") && p_property.name != "vignette_enabled" && !vignette_enabled) {
+		p_property.usage = PROPERTY_USAGE_NO_EDITOR | PROPERTY_USAGE_INTERNAL;
+		return;
+	}
+
+	if (p_property.name.begins_with("chromatic_aberration_") && p_property.name != "chromatic_aberration_enabled" && !chromatic_aberration_enabled) {
+		p_property.usage = PROPERTY_USAGE_NO_EDITOR | PROPERTY_USAGE_INTERNAL;
+		return;
+	}
+
+	if (p_property.name.begins_with("film_grain_") && p_property.name != "film_grain_enabled" && !film_grain_enabled) {
 		p_property.usage = PROPERTY_USAGE_NO_EDITOR | PROPERTY_USAGE_INTERNAL;
 		return;
 	}
@@ -134,6 +273,51 @@ void CameraAttributes::_bind_methods() {
 	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "auto_exposure_enabled", PROPERTY_HINT_GROUP_ENABLE), "set_auto_exposure_enabled", "is_auto_exposure_enabled");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "auto_exposure_scale", PROPERTY_HINT_RANGE, "0.01,64,0.01"), "set_auto_exposure_scale", "get_auto_exposure_scale");
 	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "auto_exposure_speed", PROPERTY_HINT_RANGE, "0.01,64,0.01"), "set_auto_exposure_speed", "get_auto_exposure_speed");
+
+	ClassDB::bind_method(D_METHOD("set_motion_blur_enabled", "enabled"), &CameraAttributes::set_motion_blur_enabled);
+	ClassDB::bind_method(D_METHOD("is_motion_blur_enabled"), &CameraAttributes::is_motion_blur_enabled);
+	ClassDB::bind_method(D_METHOD("set_motion_blur_amount", "amount"), &CameraAttributes::set_motion_blur_amount);
+	ClassDB::bind_method(D_METHOD("get_motion_blur_amount"), &CameraAttributes::get_motion_blur_amount);
+	ClassDB::bind_method(D_METHOD("set_motion_blur_target_fps", "target_fps"), &CameraAttributes::set_motion_blur_target_fps);
+	ClassDB::bind_method(D_METHOD("get_motion_blur_target_fps"), &CameraAttributes::get_motion_blur_target_fps);
+
+	ADD_GROUP("Motion Blur", "motion_blur_");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "motion_blur_enabled", PROPERTY_HINT_GROUP_ENABLE), "set_motion_blur_enabled", "is_motion_blur_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "motion_blur_amount", PROPERTY_HINT_RANGE, "0.0,1.0,0.01,or_greater"), "set_motion_blur_amount", "get_motion_blur_amount");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "motion_blur_target_fps", PROPERTY_HINT_RANGE, "0,240,1,or_greater,suffix:FPS"), "set_motion_blur_target_fps", "get_motion_blur_target_fps");
+
+	ClassDB::bind_method(D_METHOD("set_vignette_enabled", "enabled"), &CameraAttributes::set_vignette_enabled);
+	ClassDB::bind_method(D_METHOD("is_vignette_enabled"), &CameraAttributes::is_vignette_enabled);
+	ClassDB::bind_method(D_METHOD("set_vignette_intensity", "intensity"), &CameraAttributes::set_vignette_intensity);
+	ClassDB::bind_method(D_METHOD("get_vignette_intensity"), &CameraAttributes::get_vignette_intensity);
+	ClassDB::bind_method(D_METHOD("set_vignette_radius", "radius"), &CameraAttributes::set_vignette_radius);
+	ClassDB::bind_method(D_METHOD("get_vignette_radius"), &CameraAttributes::get_vignette_radius);
+
+	ADD_GROUP("Vignette", "vignette_");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "vignette_enabled", PROPERTY_HINT_GROUP_ENABLE), "set_vignette_enabled", "is_vignette_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "vignette_intensity", PROPERTY_HINT_RANGE, "0.0,1.0,0.01"), "set_vignette_intensity", "get_vignette_intensity");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "vignette_radius", PROPERTY_HINT_RANGE, "0.0,0.95,0.01"), "set_vignette_radius", "get_vignette_radius");
+
+	ClassDB::bind_method(D_METHOD("set_chromatic_aberration_enabled", "enabled"), &CameraAttributes::set_chromatic_aberration_enabled);
+	ClassDB::bind_method(D_METHOD("is_chromatic_aberration_enabled"), &CameraAttributes::is_chromatic_aberration_enabled);
+	ClassDB::bind_method(D_METHOD("set_chromatic_aberration_amount", "amount"), &CameraAttributes::set_chromatic_aberration_amount);
+	ClassDB::bind_method(D_METHOD("get_chromatic_aberration_amount"), &CameraAttributes::get_chromatic_aberration_amount);
+
+	ADD_GROUP("Chromatic Aberration", "chromatic_aberration_");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "chromatic_aberration_enabled", PROPERTY_HINT_GROUP_ENABLE), "set_chromatic_aberration_enabled", "is_chromatic_aberration_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "chromatic_aberration_amount", PROPERTY_HINT_RANGE, "0.0,2.0,0.01,or_greater,suffix:%"), "set_chromatic_aberration_amount", "get_chromatic_aberration_amount");
+
+	ClassDB::bind_method(D_METHOD("set_film_grain_enabled", "enabled"), &CameraAttributes::set_film_grain_enabled);
+	ClassDB::bind_method(D_METHOD("is_film_grain_enabled"), &CameraAttributes::is_film_grain_enabled);
+	ClassDB::bind_method(D_METHOD("set_film_grain_amount", "amount"), &CameraAttributes::set_film_grain_amount);
+	ClassDB::bind_method(D_METHOD("get_film_grain_amount"), &CameraAttributes::get_film_grain_amount);
+	ClassDB::bind_method(D_METHOD("set_film_grain_size", "size"), &CameraAttributes::set_film_grain_size);
+	ClassDB::bind_method(D_METHOD("get_film_grain_size"), &CameraAttributes::get_film_grain_size);
+
+	ADD_GROUP("Film Grain", "film_grain_");
+	ADD_PROPERTY(PropertyInfo(Variant::BOOL, "film_grain_enabled", PROPERTY_HINT_GROUP_ENABLE), "set_film_grain_enabled", "is_film_grain_enabled");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "film_grain_amount", PROPERTY_HINT_RANGE, "0.0,1.0,0.01,or_greater"), "set_film_grain_amount", "get_film_grain_amount");
+	ADD_PROPERTY(PropertyInfo(Variant::FLOAT, "film_grain_size", PROPERTY_HINT_RANGE, "1.0,4.0,0.1,or_greater"), "set_film_grain_size", "get_film_grain_size");
 }
 
 CameraAttributes::CameraAttributes() {

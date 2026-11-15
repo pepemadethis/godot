@@ -170,6 +170,24 @@ void ToneMapper::tonemapper(RID p_source_color, RID p_dst_framebuffer, const Ton
 
 	tonemap.push_constant.flags |= p_settings.convert_to_srgb ? TONEMAP_FLAG_CONVERT_TO_SRGB : 0;
 
+	if (p_settings.use_vignette) {
+		tonemap.push_constant.flags |= TONEMAP_FLAG_USE_VIGNETTE;
+		// The radius is where darkening starts, as a share of the way to the corners.
+		tonemap.push_constant.vignette = Math::make_half_float(CLAMP(p_settings.vignette_intensity, 0.0f, 1.0f)) | (uint32_t(Math::make_half_float(CLAMP(p_settings.vignette_radius, 0.0f, 0.95f))) << 16);
+	}
+	if (p_settings.use_chromatic_aberration) {
+		tonemap.push_constant.flags |= TONEMAP_FLAG_USE_CHROMATIC_ABERRATION;
+		tonemap.push_constant.chromatic_aberration = p_settings.chromatic_aberration_amount * 0.01f;
+	}
+	if (p_settings.use_film_grain) {
+		tonemap.push_constant.flags |= TONEMAP_FLAG_USE_FILM_GRAIN;
+		// Amount 1 swings mid grey by about 10%; the size is in pixels at 1080p.
+		float grain_size = MAX(p_settings.film_grain_size * p_settings.texture_size.y / 1080.0f, 1.0f);
+		tonemap.push_constant.film_grain = Math::make_half_float(MAX(p_settings.film_grain_amount, 0.0f) * 0.1f) | (uint32_t(Math::make_half_float(grain_size)) << 16);
+		// A new grain pattern every frame.
+		tonemap.push_constant.film_grain_seed = uint32_t(RendererCompositorRD::get_singleton()->get_frame_number());
+	}
+
 	if (p_settings.view_count > 1) {
 		// Use USE_MULTIVIEW versions
 		mode += 4;

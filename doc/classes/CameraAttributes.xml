@@ -22,6 +22,13 @@
 		<member name="auto_exposure_speed" type="float" setter="set_auto_exposure_speed" getter="get_auto_exposure_speed" default="0.5">
 			The speed of the auto exposure effect. Affects the time needed for the camera to perform auto exposure.
 		</member>
+		<member name="chromatic_aberration_amount" type="float" setter="set_chromatic_aberration_amount" getter="get_chromatic_aberration_amount" default="0.25">
+			How far red and blue fringes spread at the frame's corners, as a percentage of the distance from the centre. The lens images red slightly larger and blue slightly smaller than green, so the fringes grow from nothing at the centre; each colour is spread over a short spectrum rather than shifted as a whole. [code]0.25[/code] spreads red and blue by about 3 pixels in the corners at 1080p.
+		</member>
+		<member name="chromatic_aberration_enabled" type="bool" setter="set_chromatic_aberration_enabled" getter="is_chromatic_aberration_enabled" default="false">
+			If [code]true[/code], splits red and blue towards the frame's edges, as a cheap lens does (lateral chromatic aberration).
+			[b]Note:[/b] Only supported in the Forward+ rendering method.
+		</member>
 		<member name="exposure_multiplier" type="float" setter="set_exposure_multiplier" getter="get_exposure_multiplier" default="1.0">
 			Multiplier for the exposure amount. A higher value results in a brighter image.
 		</member>
@@ -29,6 +36,36 @@
 			Sensitivity of camera sensors, measured in ISO. A higher sensitivity results in a brighter image.
 			If [member auto_exposure_enabled] is [code]true[/code], this can be used as a method of exposure compensation, doubling the value will increase the exposure value (measured in EV100) by 1 stop.
 			[b]Note:[/b] Only available when [member ProjectSettings.rendering/lights_and_shadows/use_physical_light_units] is enabled.
+		</member>
+		<member name="film_grain_amount" type="float" setter="set_film_grain_amount" getter="get_film_grain_amount" default="0.3">
+			Strength of the grain. At [code]1.0[/code], grain moves the tones it affects most up and down by up to 10% of full brightness. Grain is strongest in the darker midtones (around a quarter of full brightness) and weaker in deep shadows and highlights, as on film.
+		</member>
+		<member name="film_grain_enabled" type="bool" setter="set_film_grain_enabled" getter="is_film_grain_enabled" default="false">
+			If [code]true[/code], adds monochrome film grain that changes every frame. It is applied after tonemapping, to the picture as displayed.
+			[b]Note:[/b] Only supported in the Forward+ rendering method.
+		</member>
+		<member name="film_grain_size" type="float" setter="set_film_grain_size" getter="get_film_grain_size" default="1.0">
+			Size of a grain, in pixels at 1080p; it scales with the resolution, so the grain looks the same at any resolution.
+		</member>
+		<member name="motion_blur_amount" type="float" setter="set_motion_blur_amount" getter="get_motion_blur_amount" default="0.5">
+			How long the shutter stays open, as a fraction of the time between two frames: [code]0.5[/code] blurs each moving pixel over half of its motion during a frame (a 180 degree shutter), [code]1.0[/code] over all of it. Higher values give longer streaks. If [member motion_blur_target_fps] is above [code]0[/code], the frame time is that frame rate's instead of the real one.
+		</member>
+		<member name="motion_blur_enabled" type="bool" setter="set_motion_blur_enabled" getter="is_motion_blur_enabled" default="false">
+			If [code]true[/code], blurs the picture along the motion of the camera and of moving objects, using the same motion vectors as temporal antialiasing. Objects with [member GeometryInstance3D.exclude_from_motion_blur] are neither blurred nor smeared over their surroundings (for first-person weapons and the player's vehicle). Streaks are limited to about 4% of the viewport's height on either side of a pixel. Transparent objects are blurred with what is behind them.
+			[b]Note:[/b] Motion blur is only supported in the Forward+ rendering method, not Mobile or Compatibility.
+		</member>
+		<member name="motion_blur_target_fps" type="float" setter="set_motion_blur_target_fps" getter="get_motion_blur_target_fps" default="0.0">
+			If above [code]0[/code], the blur is as long as it would be at this frame rate, whatever the real frame rate is, so that a game looks the same at 60 and at 144 FPS. If [code]0[/code], the blur follows the real time between frames: faster frame rates blur less.
+		</member>
+		<member name="vignette_enabled" type="bool" setter="set_vignette_enabled" getter="is_vignette_enabled" default="false">
+			If [code]true[/code], darkens the picture towards its corners, as a lens does. It is applied before tonemapping, so bright lights in the corners still clip.
+			[b]Note:[/b] Only supported in the Forward+ rendering method.
+		</member>
+		<member name="vignette_intensity" type="float" setter="set_vignette_intensity" getter="get_vignette_intensity" default="0.5">
+			How dark the corners get: [code]0.5[/code] halves the light in the corners, [code]1.0[/code] makes them black.
+		</member>
+		<member name="vignette_radius" type="float" setter="set_vignette_radius" getter="get_vignette_radius" default="0.3">
+			Where the darkening starts, as a share of the way from the centre to the corners. Inside it the picture is untouched.
 		</member>
 	</members>
 </class>

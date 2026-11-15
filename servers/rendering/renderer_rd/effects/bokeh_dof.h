@@ -33,7 +33,9 @@
 #include "servers/rendering/renderer_rd/pipeline_cache_rd.h"
 #include "servers/rendering/renderer_rd/pipeline_deferred_rd.h"
 #include "servers/rendering/renderer_rd/shaders/effects/bokeh_dof.glsl.gen.h"
+#include "servers/rendering/renderer_rd/shaders/effects/bokeh_dof_layered.glsl.gen.h"
 #include "servers/rendering/renderer_rd/shaders/effects/bokeh_dof_raster.glsl.gen.h"
+#include "servers/rendering/renderer_rd/storage_rd/render_scene_buffers_rd.h"
 
 namespace RendererRD {
 
@@ -91,6 +93,57 @@ private:
 		PipelineCacheRD raster_pipelines[BOKEH_MAX];
 	} bokeh;
 
+	// Depth of field in near and far layers (bokeh_dof_layered.glsl), Forward+ only.
+	struct LayeredPushConstant {
+		int32_t full_size[2];
+		int32_t half_size[2];
+
+		float z_near;
+		float z_far;
+		uint32_t flags;
+		int32_t sample_count;
+
+		float near_begin;
+		float near_end;
+		float far_begin;
+		float far_end;
+
+		float blur_size;
+		float blur_size_near;
+		float blur_size_far;
+		int32_t tile_size;
+
+		int32_t tile_count[2];
+		uint32_t frame;
+		uint32_t pad;
+	};
+	static_assert(sizeof(LayeredPushConstant) == 80);
+
+	enum LayeredMode {
+		LAYERED_PREPARE,
+		LAYERED_NEAR_TILES,
+		LAYERED_NEAR_DILATE,
+		LAYERED_GATHER,
+		LAYERED_FILL,
+		LAYERED_COMPOSITE,
+		LAYERED_MAX
+	};
+
+	enum {
+		LAYERED_FLAG_ORTHOGONAL = 1 << 0,
+		LAYERED_FLAG_NEAR = 1 << 1,
+		LAYERED_FLAG_FAR = 1 << 2,
+		LAYERED_FLAG_PHYSICAL_NEAR = 1 << 3,
+		LAYERED_FLAG_PHYSICAL_FAR = 1 << 4,
+		LAYERED_FLAG_JITTER = 1 << 5,
+	};
+
+	struct Layered {
+		BokehDofLayeredShaderRD shader;
+		RID shader_version;
+		RID pipelines[LAYERED_MAX];
+	} layered;
+
 public:
 	struct BokehBuffers {
 		// bokeh buffers
@@ -115,6 +168,8 @@ public:
 
 	void bokeh_dof_compute(const BokehBuffers &p_buffers, RID p_camera_attributes, float p_cam_znear, float p_cam_zfar, bool p_cam_orthogonal);
 	void bokeh_dof_raster(const BokehBuffers &p_buffers, RID p_camera_attributes, float p_cam_znear, float p_cam_zfar, bool p_cam_orthogonal);
+	// Near and far layers, at the internal resolution, in place on the internal texture.
+	void bokeh_dof_layered(Ref<RenderSceneBuffersRD> p_render_buffers, uint32_t p_view, RID p_camera_attributes, float p_cam_znear, float p_cam_zfar, bool p_cam_orthogonal);
 };
 
 } // namespace RendererRD

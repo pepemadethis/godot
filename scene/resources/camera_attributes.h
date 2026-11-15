@@ -54,6 +54,25 @@ protected:
 	float auto_exposure_scale = 0.4;
 	virtual void _update_auto_exposure() {}
 
+	bool motion_blur_enabled = false;
+	float motion_blur_amount = 0.5;
+	float motion_blur_target_fps = 0.0;
+	void _update_motion_blur();
+
+	bool vignette_enabled = false;
+	float vignette_intensity = 0.5;
+	float vignette_radius = 0.3;
+	void _update_vignette();
+
+	bool chromatic_aberration_enabled = false;
+	float chromatic_aberration_amount = 0.25;
+	void _update_chromatic_aberration();
+
+	bool film_grain_enabled = false;
+	float film_grain_amount = 0.3;
+	float film_grain_size = 1.0;
+	void _update_film_grain();
+
 public:
 	virtual RID get_rid() const override;
 	virtual float calculate_exposure_normalization() const { return 1.0; }
@@ -69,6 +88,32 @@ public:
 	float get_auto_exposure_speed() const;
 	void set_auto_exposure_scale(float p_auto_exposure_scale);
 	float get_auto_exposure_scale() const;
+
+	void set_motion_blur_enabled(bool p_enabled);
+	bool is_motion_blur_enabled() const;
+	void set_motion_blur_amount(float p_amount);
+	float get_motion_blur_amount() const;
+	void set_motion_blur_target_fps(float p_target_fps);
+	float get_motion_blur_target_fps() const;
+
+	void set_vignette_enabled(bool p_enabled);
+	bool is_vignette_enabled() const;
+	void set_vignette_intensity(float p_intensity);
+	float get_vignette_intensity() const;
+	void set_vignette_radius(float p_radius);
+	float get_vignette_radius() const;
+
+	void set_chromatic_aberration_enabled(bool p_enabled);
+	bool is_chromatic_aberration_enabled() const;
+	void set_chromatic_aberration_amount(float p_amount);
+	float get_chromatic_aberration_amount() const;
+
+	void set_film_grain_enabled(bool p_enabled);
+	bool is_film_grain_enabled() const;
+	void set_film_grain_amount(float p_amount);
+	float get_film_grain_amount() const;
+	void set_film_grain_size(float p_size);
+	float get_film_grain_size() const;
 
 	CameraAttributes();
 	~CameraAttributes();

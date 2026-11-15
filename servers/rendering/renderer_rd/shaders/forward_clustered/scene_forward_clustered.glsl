@@ -3309,6 +3309,24 @@ void fragment_shader(in SceneData scene_data) {
 	vec2 prev_position_uv = prev_position_clip * vec2(0.5, 0.5);
 
 	motion_vector = prev_position_uv - position_uv;
+
+	if (bool(scene_data.flags & SCENE_DATA_FLAGS_MOTION_BLUR_MASK)) {
+		// Motion blur's exclusion mask lives in the lowest mantissa bit of the
+		// stored half float Y (the velocity buffer is RG16F): set for objects
+		// excluded from motion blur, clear for the rest. TAA and upscalers see a
+		// change of at most one half-float step.
+		uint y_bits = packHalf2x16(vec2(motion_vector.y, 0.0));
+		if (bool(instances.data[instance_index].flags & INSTANCE_FLAGS_EXCLUDE_FROM_MOTION_BLUR)) {
+			if ((y_bits & 0x7C00u) == 0u) {
+				// Zero or subnormal: make it the smallest normal half, as subnormals may be flushed on write.
+				y_bits = (y_bits & 0x8000u) | 0x0400u;
+			}
+			y_bits |= 1u;
+		} else {
+			y_bits &= ~1u;
+		}
+		motion_vector.y = unpackHalf2x16(y_bits).x;
+	}
 #endif
 }
 

@@ -143,6 +143,7 @@ private:
 	float lightmap_texel_scale = 1.0f;
 	GIMode gi_mode = GI_MODE_STATIC;
 	bool ignore_occlusion_culling = false;
+	bool exclude_from_motion_blur = false;
 
 	const StringName *_instance_uniform_get_remap(const StringName &p_name) const;
 
@@ -209,6 +210,9 @@ public:
 
 	void set_ignore_occlusion_culling(bool p_enabled);
 	bool is_ignoring_occlusion_culling();
+
+	void set_exclude_from_motion_blur(bool p_enabled);
+	bool is_excluded_from_motion_blur() const;
 
 	virtual Ref<TriangleMesh> generate_triangle_mesh() const;
 

@@ -926,10 +926,15 @@ public:
 
 	FUNC2(camera_attributes_set_dof_blur_quality, RSE::DOFBlurQuality, bool)
 	FUNC1(camera_attributes_set_dof_blur_bokeh_shape, RSE::DOFBokehShape)
+	FUNC1(camera_attributes_set_dof_blur_near_far_layers, bool)
 
 	FUNC8(camera_attributes_set_dof_blur, RID, bool, float, float, bool, float, float, float)
 	FUNC3(camera_attributes_set_exposure, RID, float, float)
 	FUNC6(camera_attributes_set_auto_exposure, RID, bool, float, float, float, float)
+	FUNC4(camera_attributes_set_motion_blur, RID, bool, float, float)
+	FUNC4(camera_attributes_set_vignette, RID, bool, float, float)
+	FUNC3(camera_attributes_set_chromatic_aberration, RID, bool, float)
+	FUNC4(camera_attributes_set_film_grain, RID, bool, float, float)
 
 	/* SCENARIO API */
 

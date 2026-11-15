@@ -2225,6 +2225,9 @@ int RendererSceneCull::_directional_cache_view_slot(RID p_viewport) {
 		view.epoch = ++directional_cache_epoch;
 		view.last_frame = frame;
 		view.blocked_until = 0;
+		for (const Instance *&view_light : view.lights) {
+			view_light = nullptr;
+		}
 	}
 	return -1;
 }
@@ -2290,11 +2293,14 @@ void RendererSceneCull::_light_instance_setup_directional_shadow(int p_shadow_in
 			light->directional_cache.resize(p_cache_slot + 1);
 		}
 		view_cache = &light->directional_cache[p_cache_slot];
-		const uint64_t epoch = directional_cache_views[p_cache_slot].epoch;
-		use_static_cache = view_cache->epoch == epoch && view_cache->basis.is_equal_approx(light_transform.basis) && view_cache->splits == splits && view_cache->index == p_shadow_index && view_cache->count == p_shadow_count;
+		DirectionalCacheView &view = directional_cache_views[p_cache_slot];
+		const uint64_t epoch = view.epoch;
+		use_static_cache = view_cache->epoch == epoch && view.lights[p_shadow_index] == p_instance && view_cache->basis.is_equal_approx(light_transform.basis) && view_cache->splits == splits && view_cache->index == p_shadow_index && view_cache->count == p_shadow_count;
+		view.lights[p_shadow_index] = p_instance;
 		if (!use_static_cache) {
 			for (InstanceLightData::DirectionalCascadeCache &cc : view_cache->cascades) {
 				cc.valid = false;
+				cc.atlas_version = 0;
 			}
 			view_cache->epoch = epoch;
 			view_cache->basis = light_transform.basis;
@@ -2330,6 +2336,7 @@ void RendererSceneCull::_light_instance_setup_directional_shadow(int p_shadow_in
 		RENDER_TIMESTAMP("Cull DirectionalLight3D, Split " + itos(i));
 
 		cull.shadows[p_shadow_index].cascades[i].static_cache_mode = RendererSceneRender::SHADOW_STATIC_CACHE_NONE;
+		cull.shadows[p_shadow_index].cascades[i].cache = nullptr;
 
 		// setup a camera matrix for that range!
 		Projection camera_matrix;
@@ -2579,6 +2586,7 @@ void RendererSceneCull::_light_instance_setup_directional_shadow(int p_shadow_in
 				cc.cached_version = cc.version;
 			}
 			cull.shadows[p_shadow_index].cascades[i].static_cache_mode = rebuild[i] ? RendererSceneRender::SHADOW_STATIC_CACHE_REBUILD : RendererSceneRender::SHADOW_STATIC_CACHE_REUSE;
+			cull.shadows[p_shadow_index].cascades[i].cache = &cc;
 
 			fit.x_min_cam = cc.x - cc.half;
 			fit.x_max_cam = cc.x + cc.half;
@@ -2591,6 +2599,16 @@ void RendererSceneCull::_light_instance_setup_directional_shadow(int p_shadow_in
 			fit.y_min = fit.y_min_cam;
 			fit.y_max = fit.y_max_cam;
 			fit.z_min = fit.z_min_cam;
+		}
+	}
+
+	if (view_cache) {
+		// A cascade drawn without the cache this frame is drawn whole, moving casters included, over
+		// what the view's atlas held for it.
+		for (int i = 0; i < splits; i++) {
+			if (cull.shadows[p_shadow_index].cascades[i].static_cache_mode == RendererSceneRender::SHADOW_STATIC_CACHE_NONE) {
+				view_cache->cascades[i].atlas_version = 0;
+			}
 		}
 	}
 
@@ -3876,13 +3894,26 @@ void RendererSceneCull::_render_scene(const RendererSceneRender::CameraData *p_c
 				//			print_line("shadow " + itos(i) + " cascade " + itos(j) + " elements: " + itos(c.cull_result.size()));
 				RSG::light_storage->light_instance_set_shadow_transform(cull.shadows[i].light_instance, c.projection, c.transform, c.zfar, c.split, j, c.shadow_texel_size, c.bias_scale, c.range_begin, c.uv_scale);
 				if (max_shadows_used == MAX_UPDATE_SHADOWS) {
+					if (c.cache) {
+						c.cache->atlas_version = 0;
+					}
 					continue;
+				}
+				RendererSceneRender::ShadowStaticCacheMode static_cache_mode = c.static_cache_mode;
+				if (c.cache) {
+					// The view keeps its own atlas between frames. A cascade's region that already holds the
+					// cache as it is now, with nothing drawn over it, is not drawn again while nothing moves.
+					const bool nothing_moves = scene_cull_result.directional_shadows[i].cascade_dynamic_instances[j].size() == 0;
+					if (static_cache_mode == RendererSceneRender::SHADOW_STATIC_CACHE_REUSE && nothing_moves && c.cache->atlas_version == c.cache->cached_version) {
+						static_cache_mode = RendererSceneRender::SHADOW_STATIC_CACHE_KEEP;
+					}
+					c.cache->atlas_version = nothing_moves ? c.cache->cached_version : 0;
 				}
 				render_shadow_data[max_shadows_used].light = cull.shadows[i].light_instance;
 				render_shadow_data[max_shadows_used].pass = j;
 				render_shadow_data[max_shadows_used].instances.merge_unordered(scene_cull_result.directional_shadows[i].cascade_geometry_instances[j]);
 				render_shadow_data[max_shadows_used].dynamic_instances.merge_unordered(scene_cull_result.directional_shadows[i].cascade_dynamic_instances[j]);
-				render_shadow_data[max_shadows_used].static_cache_mode = c.static_cache_mode;
+				render_shadow_data[max_shadows_used].static_cache_mode = static_cache_mode;
 				render_shadow_data[max_shadows_used].static_cache_slot = MAX(cull.static_cache_slot, 0);
 				max_shadows_used++;
 			}
@@ -4099,6 +4130,8 @@ void RendererSceneCull::_render_scene(const RendererSceneRender::CameraData *p_c
 	}
 
 	RENDER_TIMESTAMP("Render 3D Scene");
+	// The view's slot also selects the directional shadow atlas this render draws into and reads.
+	RSG::light_storage->directional_shadow_set_view_slot(p_using_shadows ? cull.static_cache_slot : -1);
 	scene_render->render_scene(p_render_buffers, p_camera_data, prev_camera_data, scene_cull_result.geometry_instances, scene_cull_result.light_instances, scene_cull_result.reflections, scene_cull_result.voxel_gi_instances, scene_cull_result.decals, scene_cull_result.lightmaps, scene_cull_result.fog_volumes, p_environment, camera_attributes, p_compositor, p_shadow_atlas, occluders_tex, p_reflection_probe.is_valid() ? RID() : scenario->reflection_atlas, p_reflection_probe, p_reflection_probe_pass, p_screen_mesh_lod_threshold, render_shadow_data, max_shadows_used, render_sdfgi_data, cull.sdfgi.region_count, p_window_output_max_value, &sdfgi_update_data, r_render_info);
 
 	if (p_viewport.is_valid()) {
@@ -4168,6 +4201,7 @@ void RendererSceneCull::render_empty_scene(const Ref<RenderSceneBuffers> &p_rend
 	RendererSceneRender::CameraData camera_data;
 	camera_data.set_camera(Transform3D(), Projection(), true, false);
 
+	RSG::light_storage->directional_shadow_set_view_slot(-1);
 	scene_render->render_scene(p_render_buffers, &camera_data, &camera_data, PagedArray<RenderGeometryInstance *>(), PagedArray<RID>(), PagedArray<RID>(), PagedArray<RID>(), PagedArray<RID>(), PagedArray<RID>(), PagedArray<RID>(), environment, RID(), compositor, p_shadow_atlas, RID(), scenario->reflection_atlas, RID(), 0, 0, nullptr, 0, nullptr, 0, p_window_output_max_value, nullptr);
 #endif
 }

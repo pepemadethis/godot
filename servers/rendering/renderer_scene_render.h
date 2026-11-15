@@ -285,6 +285,7 @@ public:
 		SHADOW_STATIC_CACHE_NONE, // `instances` holds every caster; render as usual.
 		SHADOW_STATIC_CACHE_REBUILD, // Draw `instances` (the static casters) into the static cache, then restore it and draw `dynamic_instances` on top.
 		SHADOW_STATIC_CACHE_REUSE, // The static cache is current: restore it and draw `dynamic_instances` on top.
+		SHADOW_STATIC_CACHE_KEEP, // Directional lights: the view's own atlas already holds the cache with nothing over it and nothing moves: draw nothing.
 	};
 
 	struct RenderShadowData {

@@ -663,6 +663,9 @@ public:
 		uint64_t epoch = 0; // Changes each time the slot changes hands, so lights drop what they cached for it.
 		uint64_t last_frame = 0;
 		uint64_t blocked_until = 0; // The view rendered twice in one frame: no cache for a while.
+		// The light that last used each place among the view's shadowed directional lights: another
+		// light taking the place has overwritten that region of the view's cache and atlas.
+		const Instance *lights[RendererSceneRender::MAX_DIRECTIONAL_LIGHTS] = {};
 	} directional_cache_views[DIRECTIONAL_CACHE_MAX_VIEWS];
 	uint32_t directional_static_cache_max_views = 4; // rendering/lights_and_shadows/directional_shadow/static_cache_max_views
 	uint64_t directional_cache_epoch = 0;
@@ -776,6 +779,9 @@ public:
 			real_t radius = 0; // The camera slice's radius the box was made for.
 			uint64_t version = 1; // Bumped when the cached content becomes stale.
 			uint64_t cached_version = 0; // The version the cache holds.
+			// The cached version the view's own atlas holds for this cascade with nothing drawn over it,
+			// or 0. While it is the cached version and nothing moves, the cascade is not drawn at all.
+			uint64_t atlas_version = 0;
 			uint64_t generation = 0; // LightStorage::directional_shadow_get_static_generation().
 			uint64_t changes_seen = 0; // Scenario::shadow_static_change_count already checked.
 			// The camera slice's centre in light space last frame, to tell how fast it nears the box's edge.
@@ -1218,6 +1224,7 @@ public:
 				// Static cache (see InstanceLightData::DirectionalCascadeCache): when not NONE, casters
 				// are culled against the whole sticky box and split into static and moving lists.
 				RendererSceneRender::ShadowStaticCacheMode static_cache_mode = RendererSceneRender::SHADOW_STATIC_CACHE_NONE;
+				InstanceLightData::DirectionalCascadeCache *cache = nullptr; // Set when the mode is not NONE.
 
 			} cascades[RendererSceneRender::MAX_DIRECTIONAL_LIGHT_CASCADES]; //max 4 cascades
 			uint32_t cascade_count;

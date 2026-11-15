@@ -229,6 +229,9 @@ public:
 	static constexpr uint32_t DIRECTIONAL_SHADOW_STATIC_CACHE_SLOTS = 8;
 	virtual void directional_shadow_set_static_cache(bool p_enable) {}
 	virtual void directional_shadow_free_static_cache_slot(uint32_t p_slot) {}
+	// The view slot the next render uses, or -1. A view with a slot also keeps its own directional
+	// shadow atlas between frames, so cascades in which nothing changed are not drawn again.
+	virtual void directional_shadow_set_view_slot(int p_slot) {}
 	// Bumped whenever previously cached cascade regions stop being valid.
 	virtual uint64_t directional_shadow_get_static_generation() { return 0; }
 };

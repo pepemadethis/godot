@@ -793,6 +793,7 @@ private:
 		SHADOW_DESTINATION_ATLAS, // Into the shadow atlas, clearing the light's region first.
 		SHADOW_DESTINATION_STATIC_CACHE, // Into the static cache, clearing the light's region first.
 		SHADOW_DESTINATION_ATLAS_OVER_CACHE, // Restore the light's region from the static cache, then draw over it.
+		SHADOW_DESTINATION_NONE, // Directional lights: only set up the cascade's place in the atlas, which already holds it.
 	};
 
 	void _render_shadow_pass(RID p_light, RID p_shadow_atlas, int p_pass, const PagedArray<RenderGeometryInstance *> &p_instances, float p_lod_distance_multiplier = 0, float p_screen_mesh_lod_threshold = 0.0, bool p_open_pass = true, bool p_close_pass = true, bool p_clear_region = true, RenderingServerTypes::RenderInfo *p_render_info = nullptr, const Size2i &p_viewport_size = Size2i(1, 1), const Transform3D &p_main_cam_transform = Transform3D(), ShadowDestination p_destination = SHADOW_DESTINATION_ATLAS, uint32_t p_cache_slot = 0);

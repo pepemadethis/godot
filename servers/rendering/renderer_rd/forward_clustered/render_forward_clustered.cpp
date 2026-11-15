@@ -1685,9 +1685,13 @@ void RenderForwardClustered::_pre_opaque_render(RenderDataRD *p_render_data, boo
 
 		if (p_render_data->directional_shadows.size()) {
 			//open the pass for directional shadows
-			light_storage->update_directional_shadow_atlas();
-			RD::get_singleton()->draw_list_begin(light_storage->direction_shadow_get_fb(), RD::DRAW_CLEAR_DEPTH, Vector<Color>(), 0.0f);
-			RD::get_singleton()->draw_list_end();
+			// A view's own atlas keeps its content between frames: each cascade that is drawn clears or
+			// overwrites its own region, and one in which nothing changed is left alone.
+			const bool atlas_created = light_storage->update_directional_shadow_atlas();
+			if (atlas_created || !light_storage->directional_shadow_is_kept()) {
+				RD::get_singleton()->draw_list_begin(light_storage->direction_shadow_get_fb(), RD::DRAW_CLEAR_DEPTH, Vector<Color>(), 0.0f);
+				RD::get_singleton()->draw_list_end();
+			}
 		}
 	}
 
@@ -1714,15 +1718,19 @@ void RenderForwardClustered::_pre_opaque_render(RenderDataRD *p_render_data, boo
 			const bool last = i == p_render_data->directional_shadows.size() - 1;
 			switch (shadow.static_cache_mode) {
 				case SHADOW_STATIC_CACHE_NONE: {
-					_render_shadow_pass(shadow.light, p_render_data->shadow_atlas, shadow.pass, shadow.instances, lod_distance_multiplier, p_render_data->scene_data->screen_mesh_lod_threshold, false, last, false, p_render_data->render_info, viewport_size, p_render_data->scene_data->cam_transform);
+					// In a view's own atlas, which is not cleared whole, the cascade clears its region.
+					_render_shadow_pass(shadow.light, p_render_data->shadow_atlas, shadow.pass, shadow.instances, lod_distance_multiplier, p_render_data->scene_data->screen_mesh_lod_threshold, false, last, light_storage->directional_shadow_is_kept(), p_render_data->render_info, viewport_size, p_render_data->scene_data->cam_transform);
+				} break;
+				case SHADOW_STATIC_CACHE_KEEP: {
+					_render_shadow_pass(shadow.light, p_render_data->shadow_atlas, shadow.pass, shadow.dynamic_instances, lod_distance_multiplier, p_render_data->scene_data->screen_mesh_lod_threshold, false, last, false, p_render_data->render_info, viewport_size, p_render_data->scene_data->cam_transform, SHADOW_DESTINATION_NONE, shadow.static_cache_slot);
 				} break;
 				case SHADOW_STATIC_CACHE_REBUILD: {
 					// The cascade's static casters into the cache, then the cache into the atlas with the moving casters over it.
-					_render_shadow_pass(shadow.light, p_render_data->shadow_atlas, shadow.pass, shadow.instances, lod_distance_multiplier, p_render_data->scene_data->screen_mesh_lod_threshold, false, false, true, p_render_data->render_info, viewport_size, p_render_data->scene_data->cam_transform, SHADOW_DESTINATION_STATIC_CACHE);
-					_render_shadow_pass(shadow.light, p_render_data->shadow_atlas, shadow.pass, shadow.dynamic_instances, lod_distance_multiplier, p_render_data->scene_data->screen_mesh_lod_threshold, false, last, false, p_render_data->render_info, viewport_size, p_render_data->scene_data->cam_transform, SHADOW_DESTINATION_ATLAS_OVER_CACHE);
+					_render_shadow_pass(shadow.light, p_render_data->shadow_atlas, shadow.pass, shadow.instances, lod_distance_multiplier, p_render_data->scene_data->screen_mesh_lod_threshold, false, false, true, p_render_data->render_info, viewport_size, p_render_data->scene_data->cam_transform, SHADOW_DESTINATION_STATIC_CACHE, shadow.static_cache_slot);
+					_render_shadow_pass(shadow.light, p_render_data->shadow_atlas, shadow.pass, shadow.dynamic_instances, lod_distance_multiplier, p_render_data->scene_data->screen_mesh_lod_threshold, false, last, false, p_render_data->render_info, viewport_size, p_render_data->scene_data->cam_transform, SHADOW_DESTINATION_ATLAS_OVER_CACHE, shadow.static_cache_slot, shadow.static_cache_restore_tiles);
 				} break;
 				case SHADOW_STATIC_CACHE_REUSE: {
-					_render_shadow_pass(shadow.light, p_render_data->shadow_atlas, shadow.pass, shadow.dynamic_instances, lod_distance_multiplier, p_render_data->scene_data->screen_mesh_lod_threshold, false, last, false, p_render_data->render_info, viewport_size, p_render_data->scene_data->cam_transform, SHADOW_DESTINATION_ATLAS_OVER_CACHE);
+					_render_shadow_pass(shadow.light, p_render_data->shadow_atlas, shadow.pass, shadow.dynamic_instances, lod_distance_multiplier, p_render_data->scene_data->screen_mesh_lod_threshold, false, last, false, p_render_data->render_info, viewport_size, p_render_data->scene_data->cam_transform, SHADOW_DESTINATION_ATLAS_OVER_CACHE, shadow.static_cache_slot, shadow.static_cache_restore_tiles);
 				} break;
 			}
 		}
@@ -2816,7 +2824,7 @@ void RenderForwardClustered::_render_buffers_debug_draw(const RenderDataRD *p_re
 	}
 }
 
-void RenderForwardClustered::_render_shadow_pass(RID p_light, RID p_shadow_atlas, int p_pass, const PagedArray<RenderGeometryInstance *> &p_instances, float p_lod_distance_multiplier, float p_screen_mesh_lod_threshold, bool p_open_pass, bool p_close_pass, bool p_clear_region, RenderingServerTypes::RenderInfo *p_render_info, const Size2i &p_viewport_size, const Transform3D &p_main_cam_transform, ShadowDestination p_destination) {
+void RenderForwardClustered::_render_shadow_pass(RID p_light, RID p_shadow_atlas, int p_pass, const PagedArray<RenderGeometryInstance *> &p_instances, float p_lod_distance_multiplier, float p_screen_mesh_lod_threshold, bool p_open_pass, bool p_close_pass, bool p_clear_region, RenderingServerTypes::RenderInfo *p_render_info, const Size2i &p_viewport_size, const Transform3D &p_main_cam_transform, ShadowDestination p_destination, uint32_t p_cache_slot, const uint16_t *p_restore_tiles) {
 	RendererRD::LightStorage *light_storage = RendererRD::LightStorage::get_singleton();
 
 	ERR_FAIL_COND(!light_storage->owns_light_instance(p_light));
@@ -2885,13 +2893,20 @@ void RenderForwardClustered::_render_shadow_pass(RID p_light, RID p_shadow_atlas
 		atlas_rect_norm.position /= directional_shadow_size;
 		atlas_rect_norm.size /= directional_shadow_size;
 		light_storage->light_instance_set_directional_shadow_atlas_rect(p_light, p_pass, atlas_rect_norm);
+		if (p_destination == SHADOW_DESTINATION_NONE) {
+			return;
+		}
 
 		zfar = RSG::light_storage->light_get_param(base, RSE::LIGHT_PARAM_RANGE);
 
-		// The static cache mirrors the directional atlas's layout, so each cascade's region is the same in both.
-		render_fb = p_destination == SHADOW_DESTINATION_STATIC_CACHE ? light_storage->directional_shadow_get_static_fb() : light_storage->direction_shadow_get_fb();
+		// The view's static cache mirrors the directional atlas's layout, so each cascade's region is the same in both.
+		if (p_destination == SHADOW_DESTINATION_STATIC_CACHE) {
+			light_storage->directional_shadow_ensure_static_cache_slot(p_cache_slot);
+		}
+		render_fb = p_destination == SHADOW_DESTINATION_STATIC_CACHE ? light_storage->directional_shadow_get_static_fb(p_cache_slot) : light_storage->direction_shadow_get_fb();
 		ERR_FAIL_COND(render_fb.is_null());
-		static_texture = light_storage->directional_shadow_get_static_texture();
+		static_texture = light_storage->directional_shadow_get_static_texture(p_cache_slot);
+		ERR_FAIL_COND(p_destination == SHADOW_DESTINATION_ATLAS_OVER_CACHE && static_texture.is_null());
 		render_texture = RID();
 		flip_y = true;
 
@@ -3048,7 +3063,20 @@ void RenderForwardClustered::_render_shadow_pass(RID p_light, RID p_shadow_atlas
 			restore.flip_cull = false;
 			restore.uniform_buffer_index = 0;
 			restore.restore_source = static_texture;
-			scene_state.shadow_passes.push_back(restore);
+			// With tiles, only those are restored; the rest of the region already holds the cache.
+			bool restore_any = p_restore_tiles == nullptr;
+			if (p_restore_tiles) {
+				bool restore_all = true;
+				for (int i = 0; i < RenderShadowData::STATIC_CACHE_TILES; i++) {
+					restore.restore_tiles[i] = p_restore_tiles[i];
+					restore_any = restore_any || p_restore_tiles[i] != 0;
+					restore_all = restore_all && p_restore_tiles[i] == 0xFFFF;
+				}
+				restore.restore_partial = !restore_all;
+			}
+			if (restore_any) {
+				scene_state.shadow_passes.push_back(restore);
+			}
 			if (p_instances.size() == 0) {
 				return; // Nothing moving to draw over it.
 			}
@@ -3092,6 +3120,9 @@ void RenderForwardClustered::_render_positional_shadow(const RenderShadowData &p
 		} break;
 		case SHADOW_STATIC_CACHE_REUSE: {
 			_render_shadow_pass(p_shadow.light, p_shadow_atlas, p_shadow.pass, p_shadow.dynamic_instances, p_lod_distance_multiplier, p_screen_mesh_lod_threshold, false, p_close_pass, false, p_render_info, p_viewport_size, p_main_cam_transform, SHADOW_DESTINATION_ATLAS_OVER_CACHE);
+		} break;
+		case SHADOW_STATIC_CACHE_KEEP: {
+			// Directional lights only.
 		} break;
 	}
 }
@@ -3209,7 +3240,11 @@ void RenderForwardClustered::_render_shadow_end() {
 
 	for (SceneState::ShadowPass &shadow_pass : scene_state.shadow_passes) {
 		if (shadow_pass.restore_source.is_valid()) {
-			copy_effects->copy_shadow_atlas_rect(shadow_pass.restore_source, shadow_pass.framebuffer, shadow_pass.rect);
+			if (shadow_pass.restore_partial) {
+				copy_effects->copy_shadow_atlas_tiles(shadow_pass.restore_source, shadow_pass.framebuffer, shadow_pass.rect, shadow_pass.restore_tiles, RenderShadowData::STATIC_CACHE_TILES);
+			} else {
+				copy_effects->copy_shadow_atlas_rect(shadow_pass.restore_source, shadow_pass.framebuffer, shadow_pass.rect);
+			}
 			continue;
 		}
 		RenderListParameters render_list_parameters(render_list[RENDER_LIST_SECONDARY].elements.ptr() + shadow_pass.element_from, render_list[RENDER_LIST_SECONDARY].element_info.ptr() + shadow_pass.element_from, shadow_pass.element_count, shadow_pass.flip_cull, shadow_pass.pass_mode, 0, true, false, shadow_pass.rp_uniform_set, false, Vector2(), shadow_pass.lod_distance_multiplier, shadow_pass.screen_mesh_lod_threshold, 1, shadow_pass.element_from);

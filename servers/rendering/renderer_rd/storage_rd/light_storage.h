@@ -475,18 +475,26 @@ private:
 	/* DIRECTIONAL SHADOW */
 
 	struct DirectionalShadow {
+		// The atlas shared by every render that has no view slot, cleared and redrawn each time.
 		RID depth;
 		RID fb; //when renderign direct
+		uint64_t shared_used_frame = 0;
+		// A view with a slot (see the static cache below) has its own atlas, which keeps its
+		// content between frames. `view_slot` is the slot of the render in progress, or -1.
+		int view_slot = -1;
+		RID view_depth[DIRECTIONAL_SHADOW_STATIC_CACHE_SLOTS];
+		RID view_fb[DIRECTIONAL_SHADOW_STATIC_CACHE_SLOTS];
 
 		int light_count = 0;
 		int size = 0;
 		bool use_16_bits = true;
 		int current_light = 0;
 
-		// Static cache: the static casters' depth per cascade, same layout as `depth`.
+		// Static cache: the static casters' depth per cascade, same layout as `depth`, one texture
+		// per view slot, made when the slot is first drawn into.
 		bool static_cache = false;
-		RID static_depth;
-		RID static_fb;
+		RID static_depth[DIRECTIONAL_SHADOW_STATIC_CACHE_SLOTS];
+		RID static_fb[DIRECTIONAL_SHADOW_STATIC_CACHE_SLOTS];
 		// Changes whenever cached regions become invalid (atlas recreated, regions moved).
 		uint64_t static_generation = 1;
 	} directional_shadow;
@@ -1240,10 +1248,16 @@ public:
 	virtual void set_directional_shadow_count(int p_count) override;
 
 	Rect2i get_directional_shadow_rect();
-	void update_directional_shadow_atlas();
+	bool update_directional_shadow_atlas(); // True when the render's atlas was just made (its content is undefined).
+	virtual void directional_shadow_set_view_slot(int p_slot) override;
+
+	// Whether the render in progress draws into a view's own atlas, which is not cleared each frame.
+	_FORCE_INLINE_ bool directional_shadow_is_kept() const {
+		return directional_shadow.view_slot >= 0;
+	}
 
 	_FORCE_INLINE_ RID directional_shadow_get_texture() {
-		return directional_shadow.depth;
+		return directional_shadow.view_slot >= 0 ? directional_shadow.view_depth[directional_shadow.view_slot] : directional_shadow.depth;
 	}
 
 	_FORCE_INLINE_ int directional_shadow_get_size() {
@@ -1251,7 +1265,7 @@ public:
 	}
 
 	_FORCE_INLINE_ RID direction_shadow_get_fb() {
-		return directional_shadow.fb;
+		return directional_shadow.view_slot >= 0 ? directional_shadow.view_fb[directional_shadow.view_slot] : directional_shadow.fb;
 	}
 
 	_FORCE_INLINE_ void directional_shadow_increase_current_light() {
@@ -1260,15 +1274,17 @@ public:
 
 	void _directional_shadow_free_static_cache();
 
-	_FORCE_INLINE_ RID directional_shadow_get_static_texture() {
-		return directional_shadow.static_depth;
+	_FORCE_INLINE_ RID directional_shadow_get_static_texture(uint32_t p_slot) {
+		return p_slot < DIRECTIONAL_SHADOW_STATIC_CACHE_SLOTS ? directional_shadow.static_depth[p_slot] : RID();
 	}
 
-	_FORCE_INLINE_ RID directional_shadow_get_static_fb() {
-		return directional_shadow.static_fb;
+	_FORCE_INLINE_ RID directional_shadow_get_static_fb(uint32_t p_slot) {
+		return p_slot < DIRECTIONAL_SHADOW_STATIC_CACHE_SLOTS ? directional_shadow.static_fb[p_slot] : RID();
 	}
 
+	void directional_shadow_ensure_static_cache_slot(uint32_t p_slot);
 	virtual void directional_shadow_set_static_cache(bool p_enable) override;
+	virtual void directional_shadow_free_static_cache_slot(uint32_t p_slot) override;
 	virtual uint64_t directional_shadow_get_static_generation() override;
 
 	/* SHADOW CUBEMAPS */

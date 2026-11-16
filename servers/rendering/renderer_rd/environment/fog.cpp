@@ -795,6 +795,17 @@ void Fog::volumetric_fog_update(const VolumetricFogSettings &p_settings, const P
 		RD::get_singleton()->compute_list_end();
 	}
 
+	// A view with a directional shadow static cache reads its own atlas, so the texture can change
+	// from one frame to the next while the one the sets were made with still exists.
+	if (fog->directional_shadow_depth != p_settings.directional_shadow_depth) {
+		fog->directional_shadow_depth = p_settings.directional_shadow_depth;
+		fog->sync_gi_dependent_sets_validity(true);
+		if (fog->copy_uniform_set.is_valid() && RD::get_singleton()->uniform_set_is_valid(fog->copy_uniform_set)) {
+			RD::get_singleton()->free_rid(fog->copy_uniform_set);
+		}
+		fog->copy_uniform_set = RID();
+	}
+
 	bool gi_dependent_sets_valid = fog->sync_gi_dependent_sets_validity();
 	if (!fog->copy_uniform_set.is_null() && !RD::get_singleton()->uniform_set_is_valid(fog->copy_uniform_set)) {
 		fog->copy_uniform_set = RID();

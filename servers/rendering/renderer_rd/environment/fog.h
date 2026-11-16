@@ -319,6 +319,7 @@ public:
 
 		RID fog_uniform_set;
 		RID copy_uniform_set;
+		RID directional_shadow_depth; // The directional shadow atlas the copy and GI dependent sets were made with.
 
 		struct {
 			RID process_uniform_set_density;
